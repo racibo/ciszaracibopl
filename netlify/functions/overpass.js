@@ -41,8 +41,7 @@ exports.handler = async (event) => {
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
           "User-Agent": "cisza-proxy/1.0",
-          "Accept": "*/*",
-          "Accept-Encoding": "identity"
+          "Accept": "*/*"
         },
         body: "data=" + encodeURIComponent(q),
         signal: AbortSignal.timeout(8000)
