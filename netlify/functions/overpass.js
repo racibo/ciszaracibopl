@@ -22,19 +22,6 @@ exports.handler = async (event) => {
     return { statusCode: 400, body: JSON.stringify({ error: "brak parametru q" }) };
   }
 
-  if (q === "__debug") {
-    return {
-      statusCode: 200,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        eventBody: event.body,
-        isBase64: event.isBase64Encoded,
-        outgoing: "data=" + enc(q),
-        qSample: q.slice(0, 120)
-      })
-    };
-  }
-
   // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
   const enc = (s) =>
     encodeURIComponent(s).replace(/[()*!~']/g, (c) =>

@@ -348,6 +348,8 @@
     const DIRECT_OVERPASS = [
         'https://overpass-api.de/api/interpreter',
         'https://overpass.osm.ch/api/interpreter',
+        'https://overpass.kumi.systems/api/interpreter',
+        'https://overpass.private.coffee/api/interpreter',
         'https://overpass.openstreetmap.ru/api/interpreter'
     ];
 
@@ -355,31 +357,29 @@
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
 
     async function opQuery(q) {
-        const postFn = (url) => fetch(url, {
-            method: 'POST', body: JSON.stringify({ q }),
-            headers: { 'Content-Type': 'application/json' }
-        });
-        // 1) Funkcja Netlify (bezpośrednio – zachowuje ciało POST)
-        try {
-            const r = await postFn('/.netlify/functions/overpass');
-            if (r.ok) return await r.json();
-        } catch (e) { /* brak funkcji -> fallback */ }
-        // 2) Rezerwowy rewrite (gdyby działał poprawnie)
-        try {
-            const r = await postFn('/api/overpass');
-            if (r.ok) return await r.json();
-        } catch (e) { /* fallback */ }
-        // 3) Bezpośrednio (tylko endpointy z CORS)
+        // 1) Bezpośrednio z przeglądarki (IP użytkownika; api.de/osm.ch odsyłają CORS *).
         let lastErr = null;
         for (const ep of DIRECT_OVERPASS) {
             for (let a = 0; a < 2; a++) {
                 try {
-                    const res = await fetch(ep, { method: 'POST', body: 'data=' + encQ(q) });
+                    const res = await fetch(ep, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: 'data=' + encQ(q)
+                    });
                     if (!res.ok) { lastErr = 'HTTP ' + res.status; continue; }
                     return await res.json();
                 } catch (e) { lastErr = e.message; }
             }
         }
+        // 2) Rezerwa: funkcja Netlify (gdy bezpośrednio zablokowane)
+        try {
+            const r = await fetch('/.netlify/functions/overpass', {
+                method: 'POST', body: JSON.stringify({ q }),
+                headers: { 'Content-Type': 'application/json' }
+            });
+            if (r.ok) return await r.json();
+        } catch (e) { /* fallback */ }
         throw new Error(lastErr || 'brak odpowiedzi Overpass');
     }
 
