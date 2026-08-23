@@ -2,13 +2,22 @@
 // Rozwiązuje problemy z CORS (przeglądarka woła /api/overpass samoopisowo)
 // i pozwala przymierzyć kilka backendów serwerowo (bez CORS).
 exports.handler = async (event) => {
-  let body;
-  try {
-    body = JSON.parse(event.body || "{}");
-  } catch (e) {
-    body = {};
+  let q;
+  if (event.body) {
+    let raw = event.body;
+    if (event.isBase64Encoded) {
+      raw = Buffer.from(raw, "base64").toString("utf8");
+    }
+    if (typeof raw === "object") {
+      q = raw.q; // ciało już sparsowane
+    } else {
+      try {
+        q = JSON.parse(raw).q;
+      } catch (e) {
+        q = raw; // ciało to surowe zapytanie Overpass
+      }
+    }
   }
-  const q = body.q;
   if (!q) {
     return { statusCode: 400, body: JSON.stringify({ error: "brak parametru q" }) };
   }
