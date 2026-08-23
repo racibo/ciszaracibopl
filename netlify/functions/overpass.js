@@ -40,7 +40,7 @@ exports.handler = async (event) => {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": "Mozilla/5.0 (compatible; cisza-proxy/1.0)",
+          "User-Agent": "cisza-proxy/1.0",
           "Accept": "*/*",
           "Accept-Encoding": "identity"
         },
