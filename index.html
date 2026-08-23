@@ -351,6 +351,9 @@
         'https://overpass.openstreetmap.ru/api/interpreter'
     ];
 
+    // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
+    const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+
     async function opQuery(q) {
         const postFn = (url) => fetch(url, {
             method: 'POST', body: JSON.stringify({ q }),
@@ -371,7 +374,7 @@
         for (const ep of DIRECT_OVERPASS) {
             for (let a = 0; a < 2; a++) {
                 try {
-                    const res = await fetch(ep, { method: 'POST', body: 'data=' + encodeURIComponent(q) });
+                    const res = await fetch(ep, { method: 'POST', body: 'data=' + encQ(q) });
                     if (!res.ok) { lastErr = 'HTTP ' + res.status; continue; }
                     return await res.json();
                 } catch (e) { lastErr = e.message; }

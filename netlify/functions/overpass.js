@@ -22,6 +22,11 @@ exports.handler = async (event) => {
     return { statusCode: 400, body: JSON.stringify({ error: "brak parametru q" }) };
   }
 
+  // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
+  const enc = (s) =>
+    encodeURIComponent(s).replace(/[()*!~']/g, (c) =>
+      "%" + c.charCodeAt(0).toString(16).toUpperCase());
+
   const backends = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.osm.ch/api/interpreter",
@@ -43,7 +48,7 @@ exports.handler = async (event) => {
           "User-Agent": "cisza-proxy/1.0",
           "Accept": "*/*"
         },
-        body: "data=" + encodeURIComponent(q),
+        body: "data=" + enc(q),
         signal: AbortSignal.timeout(8000)
       });
       if (!resp.ok) throw new Error("HTTP " + resp.status + " (" + url + ")");
