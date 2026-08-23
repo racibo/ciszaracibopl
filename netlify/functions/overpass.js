@@ -30,38 +30,40 @@ exports.handler = async (event) => {
     "https://overpass.private.coffee/api/interpreter"
   ];
 
-  let lastErr = null;
-  for (const url of backends) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const resp = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: "data=" + encodeURIComponent(q),
-          signal: AbortSignal.timeout(12000)
-        });
-        if (!resp.ok) {
-          lastErr = "HTTP " + resp.status + " (" + url + ")";
-          continue;
-        }
-        const text = await resp.text();
-        return {
-          statusCode: 200,
-          headers: {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*"
-          },
-          body: text
-        };
-      } catch (e) {
-        lastErr = e.message + " (" + url + ")";
-      }
-    }
-  }
+  // Wyścig: pierwszy działający backend wygrywa (mieści się w limicie 10s Netlify).
+  const controllers = [];
+  const requests = backends.map((url) => {
+    const c = new AbortController();
+    controllers.push(c);
+    return (async () => {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "data=" + encodeURIComponent(q),
+        signal: AbortSignal.timeout(8000)
+      });
+      if (!resp.ok) throw new Error("HTTP " + resp.status + " (" + url + ")");
+      return await resp.text();
+    })().catch((e) => { c.abort(); throw e; });
+  });
 
-  return {
-    statusCode: 502,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ error: lastErr || "brak odpowiedzi Overpass" })
-  };
+  try {
+    const text = await Promise.any(requests);
+    controllers.forEach((c) => c.abort());
+    return {
+      statusCode: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*"
+      },
+      body: text
+    };
+  } catch (e) {
+    const all = Array.isArray(e.errors) ? e.errors.map(String).join("; ") : (e.message || String(e));
+    return {
+      statusCode: 502,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ error: all || "brak odpowiedzi Overpass" })
+    };
+  }
 };
