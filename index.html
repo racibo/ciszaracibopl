@@ -352,15 +352,21 @@
     ];
 
     async function opQuery(q) {
-        // 1) Proxy na Netlify (brak problemów z CORS)
+        const postFn = (url) => fetch(url, {
+            method: 'POST', body: JSON.stringify({ q }),
+            headers: { 'Content-Type': 'application/json' }
+        });
+        // 1) Funkcja Netlify (bezpośrednio – zachowuje ciało POST)
         try {
-            const r = await fetch('/api/overpass', {
-                method: 'POST', body: JSON.stringify({ q }),
-                headers: { 'Content-Type': 'application/json' }
-            });
+            const r = await postFn('/.netlify/functions/overpass');
             if (r.ok) return await r.json();
-        } catch (e) { /* brak proxy -> fallback */ }
-        // 2) Bezpośrednio (tylko endpointy z CORS)
+        } catch (e) { /* brak funkcji -> fallback */ }
+        // 2) Rezerwowy rewrite (gdyby działał poprawnie)
+        try {
+            const r = await postFn('/api/overpass');
+            if (r.ok) return await r.json();
+        } catch (e) { /* fallback */ }
+        // 3) Bezpośrednio (tylko endpointy z CORS)
         let lastErr = null;
         for (const ep of DIRECT_OVERPASS) {
             for (let a = 0; a < 2; a++) {
