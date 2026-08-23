@@ -38,7 +38,11 @@ exports.handler = async (event) => {
     return (async () => {
       const resp = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": "Mozilla/5.0 (compatible; cisza-proxy/1.0)",
+          "Accept": "*/*"
+        },
         body: "data=" + encodeURIComponent(q),
         signal: AbortSignal.timeout(8000)
       });
