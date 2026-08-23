@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>W poszukiwaniu ciszy</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex; height: 100vh; color: #2c3e50;
+        }
+        #sidebar {
+            width: 380px; background: #fff; padding: 18px;
+            box-shadow: 2px 0 8px rgba(0,0,0,0.12); z-index: 1000;
+            display: flex; flex-direction: column; overflow-y: auto;
+        }
+        #map { flex-grow: 1; height: 100%; }
+
+        h1 { font-size: 1.35em; margin: 0 0 4px 0; }
+        .sub { font-size: 0.82em; color: #7f8c8d; margin: 0 0 14px 0; }
+
+        .search-box { display: flex; gap: 8px; margin-bottom: 6px; }
+        .search-box input {
+            flex-grow: 1; padding: 9px; border: 1px solid #ccc; border-radius: 4px;
+        }
+        .search-box button {
+            padding: 9px 14px; background: #16a085; color: #fff; border: none;
+            border-radius: 4px; cursor: pointer; font-weight: 600;
+        }
+        .search-box button:hover { background: #138d75; }
+
+        #suggestions { list-style: none; margin: 0 0 6px 0; padding: 0; font-size: 0.82em; }
+        #suggestions li {
+            padding: 6px 8px; border: 1px solid #eee; cursor: pointer; border-radius: 4px;
+            margin-bottom: 3px; color: #34495e;
+        }
+        #suggestions li:hover { background: #f1fdfb; }
+
+        .hint { font-size: 0.78em; color: #95a5a6; text-align: center; margin: 6px 0 12px; }
+
+        details {
+            border: 1px solid #ecf0f1; border-radius: 8px; padding: 6px 10px; margin-bottom: 10px;
+            background: #fafbfc;
+        }
+        summary { cursor: pointer; font-weight: 600; font-size: 0.92em; }
+        .set-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0 2px; }
+        .set-row label { font-size: 0.82em; flex: 1; }
+        .set-row input[type=range] { flex: 1.2; }
+        .set-row .val { font-size: 0.8em; width: 32px; text-align: right; color: #16a085; font-weight: 600; }
+        .check-row { font-size: 0.85em; margin-top: 8px; }
+
+        #loader { display: none; text-align: center; margin: 12px 0; color: #7f8c8d; font-size: 0.9em; }
+
+        #result { display: none; }
+        .score-wrap { text-align: center; margin: 6px 0 12px; }
+        .score-circle {
+            width: 110px; height: 110px; border-radius: 50%; background: #eee;
+            display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+            color: #fff; font-weight: 700;
+        }
+        .score-circle .num { font-size: 2em; line-height: 1; }
+        .score-circle .of { font-size: 0.7em; opacity: 0.85; }
+        #riskLevel { font-size: 0.95em; font-weight: 600; margin-top: 6px; }
+
+        .scale-legend { font-size: 0.72em; color: #95a5a6; text-align: center; margin-bottom: 8px; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
+        th, td { text-align: left; padding: 5px 4px; border-bottom: 1px solid #eee; }
+        th { color: #7f8c8d; font-weight: 600; }
+        .pill { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 0.78em; }
+        .pill.red { background: #fdecea; color: #c0392b; }
+        .pill.green { background: #eafaf1; color: #1e8449; }
+
+        #terrainNote {
+            font-size: 0.8em; background: #f4f6f7; padding: 8px; border-radius: 6px;
+            margin-top: 10px; line-height: 1.4;
+        }
+        .err { color: #c0392b; font-size: 0.85em; }
+        .small { font-size: 0.72em; color: #95a5a6; margin-top: 10px; line-height: 1.4; }
+
+        @media (max-width: 768px) {
+            body { flex-direction: column; }
+            #sidebar { width: 100%; height: 55vh; }
+            #map { height: 45vh; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <h1>🌿 W poszukiwaniu ciszy</h1>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę.</p>
+
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
+            <button onclick="doSearch()">Szukaj</button>
+        </div>
+        <ul id="suggestions"></ul>
+        <p class="hint">…lub kliknij dowolny punkt na mapie, by go potwierdzić.</p>
+        <button onclick="useGPS()" style="width:100%;margin-top:4px;background:#8e44ad;color:#fff;border:none;border-radius:4px;padding:9px;cursor:pointer;font-weight:600;">📍 Użyj mojej lokalizacji GPS</button>
+
+        <details open>
+            <summary>⚙️ Wagi wpływu na hałas</summary>
+
+            <div class="set-row"><label>Drogi szybkiego ruchu</label>
+                <input type="range" id="w_szybki" min="0.5" max="3" step="0.1" value="2.0">
+                <span class="val" id="w_szybki_v">2.0</span></div>
+            <div class="set-row"><label>Drogi krajowe</label>
+                <input type="range" id="w_krajowa" min="0.5" max="3" step="0.1">
+                <span class="val" id="w_krajowa_v">1.5</span></div>
+            <div class="set-row"><label>Drogi wojewódzkie</label>
+                <input type="range" id="w_wojew" min="0.5" max="3" step="0.1" value="1.0">
+                <span class="val" id="w_wojew_v">1.0</span></div>
+            <div class="set-row"><label>Drogi lokalne</label>
+                <input type="range" id="w_lokalna" min="0.5" max="3" step="0.1" value="0.5">
+                <span class="val" id="w_lokalna_v">0.5</span></div>
+
+            <hr style="border:none;border-top:1px solid #eee;margin:10px 0;">
+
+            <div class="set-row"><label>Kolej (główna)</label>
+                <input type="range" id="w_kolej" min="0.5" max="3" step="0.1" value="1.8">
+                <span class="val" id="w_kolej_v">1.8</span></div>
+            <div class="set-row"><label>Kolej miejska / tramwaj</label>
+                <input type="range" id="w_miejska" min="0.5" max="3" step="0.1" value="1.3">
+                <span class="val" id="w_miejska_v">1.3</span></div>
+
+            <hr style="border:none;border-top:1px solid #eee;margin:10px 0;">
+
+            <div class="set-row"><label>Zasięg analizy (m)</label>
+                <input type="range" id="radius" min="500" max="3000" step="100" value="1500">
+                <span class="val" id="radius_v">1500</span></div>
+
+            <div class="check-row">
+                <input type="checkbox" id="terrain" checked>
+                <label for="terrain">Uwzględnij ukształtowanie terenu (wał = ciszej)</label>
+            </div>
+            <div class="set-row"><label>Wysokość wału (m)</label>
+                <input type="range" id="barrier" min="10" max="50" step="5" value="20">
+                <span class="val" id="barrier_v">20</span></div>
+        </details>
+
+        <div id="loader">Pobieram sieć dróg i kolei oraz profil terenu…</div>
+
+        <div id="result">
+            <div class="score-wrap">
+                <div id="scoreCircle" class="score-circle"><span class="num">0</span><span class="of">/ 100</span></div>
+                <div id="riskLevel">—</div>
+            </div>
+            <div class="scale-legend">0 = absolutna cisza · 100 = hałas jak na środku autostrady i przy torach</div>
+
+            <div id="assessment" style="font-size:0.85em;line-height:1.5;margin:10px 0;padding:10px;background:#f0fbf8;border-radius:8px;"></div>
+
+            <div id="terrainNote"></div>
+
+            <table id="srcTable" style="margin-top:12px;">
+                <thead><tr><th>Szlak</th><th>Typ</th><th>Odległość</th><th>Wał</th><th>Uciążliwość</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <div class="small">
+            Dane: OpenStreetMap (Overpass), Open-Meteo (wysokości), Nominatim.
+            Obliczenia wykonywane w przeglądarce – brak serwera.
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+    // ---------------- Konfiguracja modelu hałasu ----------------
+    const ROAD_BASE = {
+        motorway:83, motorway_link:78, trunk:81, trunk_link:76,
+        primary:76, primary_link:70, secondary:72, secondary_link:68,
+        tertiary:68, tertiary_link:64, residential:56, unclassified:58,
+        living_street:52, service:55
+    };
+    const RAIL_BASE = {
+        rail:80, narrow_gauge:68, funicular:58,
+        light_rail:72, tram:72, subway:65
+    };
+    const ROAD_GROUPS = {
+        szybki:['motorway','motorway_link','trunk','trunk_link'],
+        krajowa:['primary','primary_link'],
+        wojew:['secondary','secondary_link'],
+        lokalna:['tertiary','tertiary_link','residential','unclassified','living_street','service']
+    };
+    const RAIL_GROUPS = {
+        kolej:['rail','narrow_gauge','funicular'],
+        miejska:['light_rail','tram','subway']
+    };
+    const GROUP_LABEL = {
+        szybki:'Autostrada / Droga ekspresowa', krajowa:'Droga krajowa',
+        wojew:'Droga wojewódzka', lokalna:'Droga lokalna',
+        kolej:'Kolej (główna)', miejska:'Kolej miejska / tramwaj'
+    };
+    const GROUP_TYPE = {
+        szybki:'Droga', krajowa:'Droga', wojew:'Droga', lokalna:'Droga',
+        kolej:'Kolej', miejska:'Kolej'
+    };
+    const AMBIENT_DB = 30.0, REFERENCE_DB = 80.0;
+
+    // Rozchód dźwięku (prawo kwadratów odwrotnych):
+    //  - źródła liniowe (drogi, tory) → ok. 3 dB na każde podwojenie odległości
+    //  - źródła punktowe            → ok. 6 dB na każde podwojenie odległości
+    function lineLevel(L0, d) {
+        if (d <= 10) return L0;
+        return L0 - 3 * Math.log2(d / 10);
+    }
+
+    // Zasięg, w jakim dany typ szlaku "przeszkadza" (wpływa na wynik)
+    const CUTOFF = {
+        szybki: 2000, krajowa: 1000, wojew: 500, lokalna: 250,
+        kolej: 2000, miejska: 1000
+    };
+
+    // Overpass zwraca geometry jako tablicę obiektów {lat, lon}
+    function nodeLatLon(n) {
+        if (n && typeof n.lat === 'number') return [n.lat, n.lon];
+        if (Array.isArray(n)) return [n[0], n[1]]; // ew. tablica [lat, lon]
+        return null;
+    }
+
+    // ---------------- Geometria pomocnicza ----------------
+    function project(lat, lon, lat0, lon0) {
+        const R = 6378137, r = Math.PI / 180;
+        return [
+            R * Math.cos(lat0 * r) * (lon - lon0) * r,
+            R * (lat - lat0) * r
+        ];
+    }
+    function unproject(x, y, lat0, lon0) {
+        const R = 6378137, r = Math.PI / 180;
+        return [lat0 + (y / R) / r, lon0 + (x / (R * Math.cos(lat0 * r))) / r];
+    }
+    // odległość (m) i najbliższy punkt na segmencie a-b od punktu p
+    function distToSegment(p, a, b, lat0, lon0) {
+        const P = project(p[0], p[1], lat0, lon0);
+        const A = project(a[0], a[1], lat0, lon0);
+        const B = project(b[0], b[1], lat0, lon0);
+        const ABx = B[0] - A[0], ABy = B[1] - A[1];
+        const len2 = ABx * ABx + ABy * ABy;
+        let t = len2 ? ((P[0] - A[0]) * ABx + (P[1] - A[1]) * ABy) / len2 : 0;
+        t = Math.max(0, Math.min(1, t));
+        const Cx = A[0] + t * ABx, Cy = A[1] + t * ABy;
+        const C = unproject(Cx, Cy, lat0, lon0);
+        const dx = P[0] - Cx, dy = P[1] - Cy;
+        return { dist: Math.sqrt(dx * dx + dy * dy), closest: C };
+    }
+    function classify(tag, kind) {
+        const groups = kind === 'road' ? ROAD_GROUPS : RAIL_GROUPS;
+        for (const g in groups) if (groups[g].includes(tag)) return g;
+        return null;
+    }
+
+    // Prosta pamięć podręczna przeglądarki (klucz: zaokrąglone współrzędne + zasięg)
+    const _cache = new Map();
+
+    // Opisowa ocena najbardziej uciążliwego źródła
+    function buildAssessment(d, sources, st) {
+        const dM = Math.round(d.dist);
+        const cat = GROUP_LABEL[d.group].toLowerCase();
+        const nm = (d.name === GROUP_LABEL[d.group]) ? '' : ' ' + d.name;
+        let lead;
+        if (dM < 200) lead = `W bezpośrednim sąsiedztwie (${dM} m) przebiega ${cat}${nm}.`;
+        else if (dM < 800) lead = `Ok. ${dM} m stąd znajduje się ${cat}${nm}.`;
+        else lead = `W odległości ok. ${dM} m przebiega ${cat}${nm}.`;
+
+        let mid;
+        if (d.group === 'szybki' || d.group === 'kolej') {
+            mid = 'Przy takim szlaku ruch jest zazwyczaj duży i ciągły – hałas (szum opon, silników i przejeżdżających pojazdów) może być słyszalny niemal bez przerwy, zwłaszcza przy otwartych oknach i w nocy.';
+        } else if (d.group === 'krajowa') {
+            mid = 'To droga o znacznym natężeniu ruchu; hałas może przeszkadzać przy otwartych oknach, szczególnie w godzinach szczytu.';
+        } else if (d.group === 'wojew') {
+            mid = 'Droga wojewódzka generuje sporadyczniejszy, ale wyraźny ruch – słyszalny głównie przy otwartych oknach.';
+        } else {
+            mid = 'To szlak lokalny; hałas jest raczej sporadyczny i zazwyczaj słyszalny tylko przy otwartych oknach.';
+        }
+
+        let terrain = '';
+        if (st.terrain && d.rise !== null) {
+            if (d.reduction > 0) {
+                terrain = ` Teren wznosi się jednak między Tobą a szlakiem (wał ok. ${d.rise} m), co naturalnie osłania hałas o ok. ${Math.round(d.reduction * 100)}%.`;
+            } else {
+                terrain = ' Teren jest płaski, więc nie ma naturalnej osłony akustycznej.';
+            }
+        }
+        if (d.building_note) {
+            terrain += ` Dodatkowo zabudowa między punktem a szlakiem działa jak naturalny ekran akustyczny (obniżenie w ujęciu uśrednionym o ok. ${d.building_note} dB; w bezpośrednim cieniu za budynkami spadek jest znacznie większy).`;
+        }
+
+        const others = sources.filter(s => s !== d &&
+            (s.energy * s.terrainFactor) > 0.1 * d.energy * d.terrainFactor);
+        let extra = '';
+        if (others.length) extra = ` W pobliżu są też inne szlaki (${others.length}), które łącznie podnoszą tło hałasu.`;
+        if (d.level > 56) extra += ` Poziom hałasu przy tym szlaku (ok. ${Math.round(d.level)} dB) przekracza dopuszczalne 56 dB w nocy w strefie mieszkalnej jednorodzinnej.`;
+
+        return lead + ' ' + mid + terrain + extra;
+    }
+
+    // ---------------- API: Nominatim ----------------
+    async function doSearch() {
+        const q = document.getElementById('searchInput').value.trim();
+        if (!q) return;
+        const ul = document.getElementById('suggestions');
+        ul.innerHTML = '<li>Szukam…</li>';
+        try {
+            const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=5&q=' + encodeURIComponent(q),
+                { headers: { 'Accept': 'application/json' } });
+            const data = await res.json();
+            ul.innerHTML = '';
+            if (!data.length) { ul.innerHTML = '<li>Brak wyników.</li>'; return; }
+            data.forEach(d => {
+                const li = document.createElement('li');
+                li.innerText = d.display_name;
+                li.onclick = () => {
+                    ul.innerHTML = '';
+                    map.setView([parseFloat(d.lat), parseFloat(d.lon)], 16);
+                    analyze(parseFloat(d.lat), parseFloat(d.lon));
+                };
+                ul.appendChild(li);
+            });
+        } catch (e) {
+            ul.innerHTML = '<li class="err">Błąd geokodowania (CORS/limit).</li>';
+        }
+    }
+
+    // ---------------- API: Overpass przez proxy Netlify + fallback ----------------
+    function buildOverpass(lat, lon, radius) {
+        const dLat = radius / 111320;
+        const dLon = radius / (111320 * Math.cos(lat * Math.PI / 180));
+        const s = (lat - dLat).toFixed(6), n = (lat + dLat).toFixed(6);
+        const w = (lon - dLon).toFixed(6), e = (lon + dLon).toFixed(6);
+        const hw = 'motorway|trunk|primary|secondary|tertiary|residential|unclassified|living_street|service|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link';
+        const rw = 'rail|narrow_gauge|funicular|light_rail|tram|subway';
+        return `[out:json][timeout:25];(` +
+            `way["highway"~"${hw}"](${s},${w},${n},${e});` +
+            `way["railway"~"${rw}"](${s},${w},${n},${e});` +
+            `);out geom;`;
+    }
+
+    // Endpointy bezpośrednie z włączonym CORS (rezerwa, gdy funkcja proxy nie działa)
+    const DIRECT_OVERPASS = [
+        'https://overpass-api.de/api/interpreter',
+        'https://overpass.osm.ch/api/interpreter',
+        'https://overpass.openstreetmap.ru/api/interpreter'
+    ];
+
+    async function opQuery(q) {
+        // 1) Proxy na Netlify (brak problemów z CORS)
+        try {
+            const r = await fetch('/api/overpass', {
+                method: 'POST', body: JSON.stringify({ q }),
+                headers: { 'Content-Type': 'application/json' }
+            });
+            if (r.ok) return await r.json();
+        } catch (e) { /* brak proxy -> fallback */ }
+        // 2) Bezpośrednio (tylko endpointy z CORS)
+        let lastErr = null;
+        for (const ep of DIRECT_OVERPASS) {
+            for (let a = 0; a < 2; a++) {
+                try {
+                    const res = await fetch(ep, { method: 'POST', body: 'data=' + encodeURIComponent(q) });
+                    if (!res.ok) { lastErr = 'HTTP ' + res.status; continue; }
+                    return await res.json();
+                } catch (e) { lastErr = e.message; }
+            }
+        }
+        throw new Error(lastErr || 'brak odpowiedzi Overpass');
+    }
+
+    async function fetchWays(lat, lon, radius) {
+        const q = buildOverpass(lat, lng, radius);
+        const json = await opQuery(q);
+        if (json && json.remark && (!json.elements || !json.elements.length)) {
+            throw new Error(json.remark);
+        }
+        return (json && json.elements) || [];
+    }
+
+    async function fetchBuildings(bbox) {
+        const { s, w, n, e } = bbox;
+        const q = `[out:json][timeout:25];(way["building"](${s},${w},${n},${e}););out geom;`;
+        try { const json = await opQuery(q); return (json && json.elements) || []; }
+        catch (e) { return []; }
+    }
+
+    // --- Geometria: odległość, przecięcie odcinków (ekran budynkowy) ---
+    function distMeters(a, b, lat0, lon0) {
+        const A = project(a[0], a[1], lat0, lon0);
+        const B = project(b[0], b[1], lat0, lon0);
+        return Math.sqrt((A[0] - B[0]) ** 2 + (A[1] - B[1]) ** 2);
+    }
+    function segInt(p1, p2, p3, p4) {
+        const d = (p2[0] - p1[0]) * (p4[1] - p3[1]) - (p2[1] - p1[1]) * (p4[0] - p3[0]);
+        if (d === 0) return false;
+        const t = ((p3[0] - p1[0]) * (p4[1] - p3[1]) - (p3[1] - p1[1]) * (p4[0] - p3[0])) / d;
+        const u = ((p3[0] - p1[0]) * (p2[1] - p1[1]) - (p3[1] - p1[1]) * (p2[0] - p1[0])) / d;
+        return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+    }
+    function segHitsPoly(s, p, poly) {
+        for (let i = 0; i < poly.length - 1; i++)
+            if (segInt(s, p, poly[i], poly[i + 1])) return true;
+        if (poly.length > 2 && segInt(s, p, poly[poly.length - 1], poly[0])) return true;
+        return false;
+    }
+
+    // Jaki % długości źródła liniowego jest osłonięty budynkami między nim a punktem.
+    // Nieuosłonięte 75% i tak emituje ogromną energię (logarytm dźwięku), więc
+    // uśredniony spadek dla całego obszaru jest niewielki (~1 dB na 25% osłonięcia).
+    async function buildingFactorFor(src, lat, lng) {
+        try {
+            const pts = src.geom.concat([[lat, lng]]);
+            let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
+            for (const pt of pts) {
+                minLat = Math.min(minLat, pt[0]); maxLat = Math.max(maxLat, pt[0]);
+                minLon = Math.min(minLon, pt[1]); maxLon = Math.max(maxLon, pt[1]);
+            }
+            const dLatB = 100 / 111320, dLonB = 100 / (111320 * Math.cos(lat * Math.PI / 180));
+            const bbox = {
+                s: (minLat - dLatB).toFixed(5), n: (maxLat + dLatB).toFixed(5),
+                w: (minLon - dLonB).toFixed(5), e: (maxLon + dLonB).toFixed(5)
+            };
+            const els = await fetchBuildings(bbox);
+            const polys = els.map(el => (el.geometry || []).map(nodeLatLon)
+                .filter(g => g && isFinite(g[0]) && isFinite(g[1]))).filter(p => p.length >= 3);
+            if (!polys.length) return 1;
+
+            const samples = src.geom.filter(rp => distMeters(rp, [lat, lng], lat, lng) <= 1500);
+            if (samples.length > 60) {
+                const step = Math.ceil(samples.length / 60);
+                for (let i = samples.length - 1; i >= 0; i--) if (i % step !== 0) samples.splice(i, 1);
+            }
+            if (!samples.length) return 1;
+            const P = [lat, lng];
+            let wTot = 0, wShield = 0;
+            for (const S of samples) {
+                const d = distMeters(S, P, lat, lng);
+                const w = 1 / (d + 1);
+                let blocked = false;
+                for (const poly of polys) { if (segHitsPoly(S, P, poly)) { blocked = true; break; } }
+                wTot += w; if (blocked) wShield += w;
+            }
+            const f = wTot > 0 ? wShield / wTot : 0;
+            if (f <= 0) return 1;
+            const SHIELD = 0.07; // cień akustyczny za budynkiem-ekranem ok. -11 dB
+            return (1 - f) + f * SHIELD;
+        } catch (e) { return 1; }
+    }
+
+    // --- Wskaźnik postępu (licznik sekund) ---
+    let _loaderTimer = null, _loaderSecs = 0;
+    function startLoader(text) {
+        _loaderSecs = 0;
+        const el = document.getElementById('loader');
+        el.style.display = 'block';
+        el.innerText = text + ' (0 s)';
+        if (_loaderTimer) clearInterval(_loaderTimer);
+        _loaderTimer = setInterval(() => {
+            _loaderSecs++;
+            el.innerText = text + ' (' + _loaderSecs + ' s)';
+        }, 1000);
+    }
+    function stepLoader(text) {
+        document.getElementById('loader').innerText = text + ' (' + _loaderSecs + ' s)';
+    }
+    function stopLoader() {
+        if (_loaderTimer) { clearInterval(_loaderTimer); _loaderTimer = null; }
+        document.getElementById('loader').style.display = 'none';
+    }
+
+    // ---------------- API: Open-Meteo wysokości ----------------
+    async function fetchElevation(points) {
+        if (!points.length) return null;
+        const lat = points.map(p => p[0]).join(',');
+        const lon = points.map(p => p[1]).join(',');
+        const res = await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lon}`);
+        if (!res.ok) return null;
+        const j = await res.json();
+        return j.elevation;
+    }
+
+    // ---------------- Ustawienia ----------------
+    function readSettings() {
+        return {
+            radius: parseInt(document.getElementById('radius').value),
+            roadW: {
+                szybki: +document.getElementById('w_szybki').value,
+                krajowa: +document.getElementById('w_krajowa').value,
+                wojew: +document.getElementById('w_wojew').value,
+                lokalna: +document.getElementById('w_lokalna').value
+            },
+            railW: {
+                kolej: +document.getElementById('w_kolej').value,
+                miejska: +document.getElementById('w_miejska').value
+            },
+            terrain: document.getElementById('terrain').checked,
+            barrier: +document.getElementById('barrier').value
+        };
+    }
+
+    // ---------------- Główna analiza ----------------
+    async function analyze(lat, lng) {
+        if (marker) map.removeLayer(marker);
+        marker = L.marker([lat, lng]).addTo(map);
+        document.getElementById('result').style.display = 'none';
+        startLoader('1/3 Pobieram sieć dróg i kolei…');
+
+        const st = readSettings();
+        const cacheKey = lat.toFixed(3) + '|' + lng.toFixed(3) + '|' + Math.max(st.radius, 2000);
+        let ways = _cache.has(cacheKey) ? _cache.get(cacheKey) : null;
+        if (!ways) {
+            try {
+                ways = await fetchWays(lat, lng, Math.max(st.radius, 2000));
+                if (ways.length) _cache.set(cacheKey, ways); // nie cachujemy pustych!
+            } catch (e) {
+                stopLoader();
+                alert('Nie udało się pobrać danych z Overpass: ' + e.message +
+                      '\nSpróbuj ponownie za chwilę (serwery bywają przeciążone).');
+                return;
+            }
+            if (!ways.length) {
+                stopLoader();
+                alert('Overpass nie zwrócił danych (serwer przeciążony lub błąd zapytania). Spróbuj ponownie za chwilę.');
+                return;
+            }
+        }
+
+        const p = [lat, lng];
+        const raw = [];
+        for (const el of ways) {
+            const geomRaw = el.geometry;
+            if (!geomRaw || !geomRaw.length) continue;
+            const geom = geomRaw.map(nodeLatLon).filter(g => g && isFinite(g[0]) && isFinite(g[1]));
+            if (geom.length < 2) continue;
+            const tags = el.tags || {};
+            let kind = null, tag = null;
+            if (tags.highway) { kind = 'road'; tag = tags.highway; }
+            else if (tags.railway) { kind = 'rail'; tag = tags.railway; }
+            if (!kind) continue;
+
+            const baseMap = kind === 'road' ? ROAD_BASE : RAIL_BASE;
+            const base = baseMap[tag];
+            if (base === undefined) continue;
+            const group = classify(tag, kind);
+            if (!group) continue;
+            const weight = (kind === 'road' ? st.roadW : st.railW)[group];
+
+            // najbliższy punkt i odległość wzdłuż całej drogi
+            let best = { dist: Infinity, closest: null };
+            for (let i = 0; i < geom.length - 1; i++) {
+                const r = distToSegment(p, geom[i], geom[i + 1], lat, lng);
+                if (r.dist < best.dist) best = r;
+            }
+            if (!isFinite(best.dist)) continue;
+            if (best.dist > CUTOFF[group]) continue;
+
+            const l = lineLevel(base, best.dist);
+            const energy = weight * Math.pow(10, l / 10);
+            const name = tags.name || GROUP_LABEL[group];
+
+            raw.push({
+                name, kind, group, weight, geom,
+                dist: best.dist, closest: best.closest,
+                level: l, energy, terrainFactor: 1, reduction: 0, rise: null,
+                buildingFactor: 1
+            });
+        }
+
+        // Dedublikacja: jedna fizyczna droga (nazwa+typ) = jeden wpis,
+        // zachowujemy najbliższy odcinek. To chroni przed sumowaniem
+        // wielu segmentów/way-ów tej samej ulicy.
+        const byKey = new Map();
+        for (const s of raw) {
+            const key = s.name
+                ? s.group + '|' + s.name
+                : s.group + '|__' + Math.round(s.closest[0] * 1000) + '_' + Math.round(s.closest[1] * 1000);
+            const ex = byKey.get(key);
+            if (!ex || s.dist < ex.dist) byKey.set(key, s);
+        }
+        const sources = [...byKey.values()];
+
+        // --- Ukształtowanie terenu (wał) ---
+        let terrainNote = 'Ukształtowanie terenu nie zostało uwzględnione.';
+        if (st.terrain && sources.length) {
+            stepLoader('2/3 Sprawdzam teren i zabudowę (wał / budynki)…');
+            const cand = sources
+                .filter(s => s.dist <= 1500)
+                .sort((a, b) => b.energy - a.energy)
+                .slice(0, 20);
+
+            const pts = [[lat, lng]];
+            for (const s of cand) {
+                pts.push(s.closest);
+                for (const t of [0.33, 0.66]) {
+                    pts.push([
+                        lat + (s.closest[0] - lat) * t,
+                        lng + (s.closest[1] - lng) * t
+                    ]);
+                }
+            }
+            const elev = await fetchElevation(pts);
+            if (elev) {
+                const eLoc = elev[0];
+                let idx = 1, barriers = 0;
+                for (const s of cand) {
+                    const eSrc = elev[idx];
+                    const eM1 = elev[idx + 1];
+                    const eM2 = elev[idx + 2];
+                    idx += 3;
+                    const rise = Math.max(eM1, eM2) - Math.min(eLoc, eSrc);
+                    s.rise = Math.round(rise * 10) / 10;
+                    if (rise >= st.barrier) {
+                        s.reduction = Math.min(0.8, 0.3 + (rise - st.barrier) / 100);
+                        barriers++;
+                    } else {
+                        s.reduction = 0;
+                    }
+                    s.terrainFactor = 1 - s.reduction;
+                }
+                terrainNote = barriers
+                    ? `Wyznaczono ${barriers} szlaków osłoniętych wałem (>${st.barrier} m) – hałas obniżony.`
+                    : 'Teren płaski lub łagodny – brak naturalnej osłony akustycznej.';
+            } else {
+                terrainNote = 'Brak dostępu do danych o wysokości terenu (API niedostępne).';
+            }
+
+            // --- Osłona budynkami (ekran akustyczny dla źródeł liniowych) ---
+            const buildCand = sources
+                .sort((a, b) => b.energy - a.energy)
+                .slice(0, 2); // tylko najważniejsze, by nie obciążać Overpass
+            for (const s of buildCand) {
+                s.buildingFactor = await buildingFactorFor(s, lat, lng);
+            }
+        }
+
+        // --- Wynik: bierzemy pod uwagę najbardziej uciążliwe źródło ---
+        sources.sort((a, b) =>
+            (b.energy * b.terrainFactor * b.buildingFactor) -
+            (a.energy * a.terrainFactor * a.buildingFactor));
+        const dominant = sources[0];
+        let scoreEnergy = 0, assessment = '';
+        if (dominant) {
+            scoreEnergy = dominant.energy * dominant.terrainFactor * dominant.buildingFactor;
+            for (let i = 1; i < sources.length; i++) {
+                const eff = sources[i].energy * sources[i].terrainFactor * sources[i].buildingFactor;
+                if (eff > 0.05 * scoreEnergy) scoreEnergy += 0.25 * eff;
+            }
+            assessment = buildAssessment(dominant, sources, st);
+        } else {
+            assessment = 'W promieniu analizy nie wykryto istotnych dróg ani linii kolejowych – miejsce zapowiada się bardzo cicho.';
+        }
+
+        // Uciążliwość każdego źródła w skali 0-100
+        for (const s of sources) {
+            const eff = s.energy * s.terrainFactor * s.buildingFactor;
+            const lvl = 10 * Math.log10(eff + 1e-9);
+            s.burden = Math.max(0, Math.min(100, Math.round((lvl - AMBIENT_DB) / (REFERENCE_DB - AMBIENT_DB) * 100)));
+            if (s.buildingFactor < 1) {
+                const dB = -10 * Math.log10(s.buildingFactor);
+                s.building_note = Math.round(dB);
+            }
+        }
+
+        stepLoader('3/3 Obliczam wynik…');
+        const energyTotal = Math.pow(10, AMBIENT_DB / 10) + scoreEnergy;
+        const levelDb = 10 * Math.log10(energyTotal);
+        const score = Math.max(0, Math.min(100,
+            (levelDb - AMBIENT_DB) / (REFERENCE_DB - AMBIENT_DB) * 100));
+
+        const top = sources.slice(0, 6).map(s => ({
+            name: s.name, type: GROUP_TYPE[s.group], category: GROUP_LABEL[s.group],
+            distance_m: Math.round(s.dist),
+            weight: s.weight,
+            terrain_reduction_pct: Math.round(s.reduction * 100),
+            burden: s.burden,
+            building_reduction_db: s.building_note || null
+        }));
+
+        render({
+            score: Math.round(score), level_db: Math.round(levelDb * 10) / 10,
+            assessment, terrain_note: terrainNote, sources: top
+        });
+    }
+
+    function render(d) {
+        document.getElementById('loader').style.display = 'none';
+        document.getElementById('result').style.display = 'block';
+        const c = document.getElementById('scoreCircle');
+        c.querySelector('.num').innerText = d.score;
+
+        let color, label;
+        if (d.score <= 25) { color = '#1e8449'; label = 'Absolutna cisza 🌲'; }
+        else if (d.score <= 50) { color = '#27ae60'; label = 'Bardzo cicho 🍃'; }
+        else if (d.score <= 75) { color = '#f39c12'; label = 'Umiarkowany szum 🌆'; }
+        else { color = '#c0392b'; label = 'Głośno! 🚗🚆'; }
+        c.style.background = color;
+        document.getElementById('riskLevel').innerText =
+            label + '  (poziom ' + d.level_db + ' dB)';
+        document.getElementById('assessment').innerText = d.assessment || '';
+        document.getElementById('terrainNote').innerText = d.terrain_note || '';
+
+        const tb = document.querySelector('#srcTable tbody');
+        tb.innerHTML = '';
+        (d.sources || []).forEach(s => {
+            const tr = document.createElement('tr');
+            const wal = s.terrain_reduction_pct > 0
+                ? `<span class="pill green">−${s.terrain_reduction_pct}%</span>`
+                : `<span class="pill red">brak</span>`;
+            const burdenColor = s.burden >= 70 ? '#c0392b'
+                : s.burden >= 40 ? '#e67e22' : '#27ae60';
+            const burdenCell = `<span style="color:${burdenColor};font-weight:600;">${s.burden}/100</span>` +
+                (s.building_reduction_db ? ` <span class="pill green">−${s.building_reduction_db} dB</span>` : '');
+            tr.innerHTML = `<td>${s.name}</td><td>${s.type}</td>` +
+                `<td>${s.distance_m} m</td><td>${wal}</td><td>${burdenCell}</td>`;
+            tb.appendChild(tr);
+        });
+        if (!d.sources.length)
+            tb.innerHTML = '<tr><td colspan="5" style="color:#7f8c8d;">Brak szlaków w zasięgu.</td></tr>';
+    }
+
+    // ---------------- Mapa ----------------
+    const map = L.map('map').setView([52.2297, 21.0118], 12);
+    let marker = null;
+    const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19, attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+    // Mapa topograficzna z poziomicami (OpenTopoMap, darmowa, bez klucza)
+    const topoLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+        maxZoom: 17, attribution: '© OpenTopoMap (CC-BY-SA)'
+    });
+    L.control.layers(
+        { 'Standardowa OSM': osmLayer, 'Topograficzna (poziomice)': topoLayer },
+        null, { position: 'topright' }
+    ).addTo(map);
+    L.control.scale({ imperial: false, maxWidth: 200 }).addTo(map);
+    map.on('click', e => analyze(e.latlng.lat, e.latlng.lng));
+
+    document.querySelectorAll('input[type=range]').forEach(r => {
+        r.addEventListener('input', () => {
+            document.getElementById(r.id + '_v').innerText =
+                (r.id === 'radius' || r.id === 'barrier') ? r.value : parseFloat(r.value).toFixed(1);
+        });
+    });
+        document.getElementById('searchInput').addEventListener('keydown', e => {
+            if (e.key === 'Enter') doSearch();
+        });
+
+        function useGPS() {
+            if (!navigator.geolocation) { alert('Twoja przeglądarka nie obsługuje geolokacji.'); return; }
+            document.getElementById('loader').style.display = 'block';
+            navigator.geolocation.getCurrentPosition(
+                pos => {
+                    const lat = pos.coords.latitude, lng = pos.coords.longitude;
+                    map.setView([lat, lng], 16);
+                    analyze(lat, lng);
+                },
+                err => {
+                    document.getElementById('loader').style.display = 'none';
+                    alert('Nie udało się uzyskać lokalizacji GPS: ' + err.message);
+                },
+                { enableHighAccuracy: true, timeout: 10000 }
+            );
+        }
+    </script>
+</body>
+</html>

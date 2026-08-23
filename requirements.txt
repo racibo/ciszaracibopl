@@ -1,0 +1,6 @@
+flask>=3.0
+osmnx>=1.9
+requests>=2.31
+geopandas>=0.14
+shapely>=2.0
+pandas>=2.0

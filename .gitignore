@@ -1,0 +1,14 @@
+# Python (stara wersja backendu, nieużywana przez statyczną stronę)
+__pycache__/
+*.pyc
+
+# Netlify
+.netlify/
+
+# edytory / system
+.DS_Store
+Thumbs.db
+*~
+
+# tymczasowe
+*.tmp
