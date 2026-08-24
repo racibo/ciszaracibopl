@@ -94,7 +94,7 @@
 
     <div id="sidebar">
         <h1>🌿 W poszukiwaniu ciszy</h1>
-        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24j]</span></p>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24k]</span></p>
 
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
@@ -208,8 +208,8 @@
 
     // Model dyskretyzacji + ray-casting (źródło liniowe jako setki punktów)
     const SEG_STEP = 20;          // długość segmentu drogi [m]
-    const BUILDING_ATT = 12;      // tłumienie [dB] za pierwszą przeszkodą (budynkiem)
-    const BUILDING_RADIUS = 1000; // promień pobierania budynków wokół punktu [m]
+    const BUILDING_ATT = 12;      // maks. tłumienie [dB] za przeszkodą (budynkiem)
+    const BUILDING_RADIUS = 600;  // promień pobierania budynków wokół punktu [m]
 
     // Overpass zwraca geometry jako tablicę obiektów {lat, lon}
     function nodeLatLon(n) {
@@ -292,26 +292,54 @@
         return false;
     }
 
-    // Agregacja jednej drogi (źródło liniowe) metodą dyskretyzacji + LOS
-    // Zwraca sumaryczną energię (z i bez przeszkód), liczbę odcinków i najbliższy punkt.
-    function aggregateLine(p, geom, base, polys, att, radius) {
-        const mids = segmentize(geom, SEG_STEP);
-        let energy = 0, energyUnblocked = 0, blocked = 0, total = 0;
-        let distMin = Infinity, closest = null;
-        const LwSeg = base + 10 * Math.log10(SEG_STEP); // moc 20-metrowego odcinka
-        for (const m of mids) {
-            const d = haversine(p, m);
-            if (d > radius) continue;
-            if (d < distMin) { distMin = d; closest = m; }
-            const free = LwSeg - 20 * Math.log10(Math.max(d, 1)) - 11;
-            energyUnblocked += Math.pow(10, free / 10);
-            const blocked_i = rayBlocked(p, m, polys);
-            const li = blocked_i ? free - att : free;
-            energy += Math.pow(10, li / 10);
-            if (blocked_i) blocked++;
-            total++;
+    // Ułamek widoczności odcinka [a,b] z punktu p: próbkujemy punkty na odcinku
+    // i liczymy, ile ma czystą linię widoku. Dzięki temu osłona jest CIĄGŁA
+    // (odcinek częściowo zasłonięty = częściowe tłumienie), a nie binarna.
+    function visibilityFraction(p, a, b, polys, samples) {
+        let vis = 0;
+        for (let s = 0; s < samples; s++) {
+            const tt = samples === 1 ? 0.5 : s / (samples - 1);
+            const pt = [a[0] + (b[0] - a[0]) * tt, a[1] + (b[1] - a[1]) * tt];
+            if (!rayBlocked(p, pt, polys)) vis++;
         }
-        return { energy, energyUnblocked, blocked, total, distMin, closest };
+        return vis / samples;
+    }
+
+    // Dzieli drogę na 20-metrowe kawałki i dla każdego liczy odległość + widoczność.
+    function segmentizeVis(p, geom, polys, radius) {
+        const segs = [];
+        for (let i = 0; i < geom.length - 1; i++) {
+            const a = geom[i], b = geom[i + 1];
+            const segM = haversine(a, b);
+            if (segM < 1e-6) continue;
+            const n = Math.max(1, Math.round(segM / SEG_STEP));
+            for (let k = 0; k < n; k++) {
+                const t = (k + 0.5) / n;
+                const mid = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+                const d = haversine(p, mid);
+                if (d > radius) continue;
+                const vis = visibilityFraction(p, a, b, polys, 3);
+                segs.push({ a, b, mid, d, vis });
+            }
+        }
+        return segs;
+    }
+
+    // Agregacja całej drogi (źródło liniowe) jako całości: sumujemy wkład każdego
+    // 20-metrowego odcinka (rozchodzenie sferyczne -6 dB/oddalenie) z uwzględnieniem
+    // jego UŁAMKA widoczności (ciągła osłona budynkowa). Zwraca też listę odcinków do rysowania.
+    function aggregateLine(p, geom, base, polys, att, radius) {
+        const segs = segmentizeVis(p, geom, polys, radius);
+        let energy = 0, energyUnblocked = 0, distMin = Infinity, closest = null;
+        const LwSeg = base + 10 * Math.log10(SEG_STEP); // moc 20-metrowego odcinka
+        for (const sg of segs) {
+            const free = LwSeg - 20 * Math.log10(Math.max(sg.d, 1)) - 11;
+            const att_i = (1 - sg.vis) * att;          // tłumienie proporcjonalne do zasłonięcia
+            energy += Math.pow(10, (free - att_i) / 10);
+            energyUnblocked += Math.pow(10, free / 10);
+            if (sg.d < distMin) { distMin = sg.d; closest = sg.mid; }
+        }
+        return { energy, energyUnblocked, distMin, closest, segs };
     }
 
     // ---------------- Geometria pomocnicza ----------------
@@ -536,7 +564,7 @@
 
     // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-    console.log('CISZA-APP v2026-08-24j loaded');
+    console.log('CISZA-APP v2026-08-24k loaded');
 
     async function opQuery(q) {
         const RACE_TIMEOUT = 10000;
@@ -801,7 +829,7 @@
         const raw = [];
         for (const c of cands) {
             const agg = aggregateLine(p, c.geom, c.base, polys, BUILDING_ATT, ANALYSIS_R);
-            if (agg.total === 0) continue;
+            if (agg.segs.length === 0) continue;
             if (agg.distMin > CUTOFF[c.group]) continue;
             const energy = c.weight * agg.energy;
             const level = 10 * Math.log10(energy + 1e-9);
@@ -812,7 +840,7 @@
             const screenFrac = agg.energyUnblocked > 0
                 ? Math.min(0.95, Math.max(0, 1 - agg.energy / agg.energyUnblocked)) : 0;
             raw.push({
-                name: c.name, kind: c.kind, group: c.group, weight: c.weight, geom: c.geom,
+                name: c.name, kind: c.kind, group: c.group, weight: c.weight, geom: c.geom, segs: agg.segs,
                 dist: agg.distMin, closest: agg.closest, base: c.base,
                 level, energy, terrainFactor: 1, reduction: 0, rise: null,
                 buildingFactor: Math.pow(10, -barrierDb / 10), screenFrac, barrierDb
@@ -877,30 +905,28 @@
             }
         }
 
-        // --- Warstwa akustyczna: przebieg drogi + promienie widoczności (ray-casting) ---
+        // --- Warstwa akustyczna: cała droga jako ciągła linia, kolor = widoczność ---
+        // Każdy 20-metrowy odcinek malujemy osobno: zielony = widoczny (słychać),
+        // czerwony = przesłonięty budynkami. To całościowa integracja źródła liniowego.
         if (sources.length) {
             stepLoader('2d/3 Rysuję mapę hałasu…');
             coneLayer.clearLayers();
-            const drawList = sources.slice().sort((a, b) => b.energy - a.energy).slice(0, 6);
+            const drawList = sources.slice().sort((a, b) => b.energy - a.energy).slice(0, 8);
             for (const s of drawList) {
                 const key = s.group + '|' + s.name;
-                const col = s.screenFrac > 0.4 ? '#1e8449' : s.screenFrac > 0.15 ? '#e67e22' : '#c0392b';
-                const main = L.polyline(s.geom, { color: col, weight: 2, opacity: 0.75 })
+                const baseCol = s.screenFrac > 0.4 ? '#1e8449' : s.screenFrac > 0.15 ? '#e67e22' : '#c0392b';
+                const main = L.polyline(s.geom, { color: baseCol, weight: 2, opacity: 0.6 })
                     .bindTooltip(`${s.name}: przesłonięte budynkami ${(s.screenFrac * 100).toFixed(0)}%`)
                     .addTo(coneLayer);
                 coneByKey[key] = main;
-                // detale: promienie widoczne/przesłonięte dla bliskich odcinków
-                if (s.dist <= 1500) {
-                    const mids = segmentize(s.geom, SEG_STEP);
-                    const step = Math.max(1, Math.ceil(mids.length / 300));
-                    for (let i = 0; i < mids.length; i += step) {
-                        const m = mids[i];
-                        if (haversine(p, m) > 1500) continue;
-                        const blocked = rayBlocked(p, m, polys);
-                        L.polyline([p, m], {
-                            color: blocked ? '#c0392b' : '#1e8449',
-                            weight: 1, opacity: 0.22
-                        }).addTo(coneLayer);
+                // gradient widoczności wzdłuż całej drogi (tylko bliskie odcinki)
+                if (s.dist <= 1500 && s.segs) {
+                    const step = Math.max(1, Math.ceil(s.segs.length / 400));
+                    for (let i = 0; i < s.segs.length; i += step) {
+                        const sg = s.segs[i];
+                        if (sg.d > 1500) continue;
+                        const c = sg.vis > 0.66 ? '#1e8449' : sg.vis > 0.33 ? '#e67e22' : '#c0392b';
+                        L.polyline([sg.a, sg.b], { color: c, weight: 3, opacity: 0.55 }).addTo(coneLayer);
                     }
                 }
             }
