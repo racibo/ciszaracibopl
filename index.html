@@ -94,7 +94,7 @@
 
     <div id="sidebar">
         <h1>🌿 W poszukiwaniu ciszy</h1>
-        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24n]</span></p>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24o]</span></p>
 
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
@@ -564,7 +564,7 @@
 
     // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-    console.log('CISZA-APP v2026-08-24n loaded');
+    console.log('CISZA-APP v2026-08-24o loaded');
 
     async function opQuery(q) {
         const RACE_TIMEOUT = 10000;
@@ -635,14 +635,14 @@
     let buildingFetchError = '';
     async function fetchBuildings(bbox) {
         const key = bbox.s + ',' + bbox.w + ',' + bbox.n + ',' + bbox.e;
-        if (_bCache.has(key)) return _bCache.get(key);
+        if (_bCache.has(key) && _bCache.get(key).length) return _bCache.get(key);
+        buildingFetchError = '';
         const { s, w, n, e } = bbox;
         const q = `[out:json][timeout:25];(way["building"](${s},${w},${n},${e}););out geom;`;
         let els = [];
         try { const json = await opQuery(q); els = (json && json.elements) || []; }
         catch (e) { els = []; buildingFetchError = e.message || 'błąd pobierania zabudowy'; }
-        _bCache.set(key, els);
-        persistCache(_bCache, LS_BUILD);
+        if (els.length) { _bCache.set(key, els); persistCache(_bCache, LS_BUILD); }
         return els;
     }
 
