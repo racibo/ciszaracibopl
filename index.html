@@ -94,7 +94,7 @@
 
     <div id="sidebar">
         <h1>🌿 W poszukiwaniu ciszy</h1>
-        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24e]</span></p>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24f]</span></p>
 
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
@@ -105,31 +105,7 @@
         <button onclick="useGPS()" style="width:100%;margin-top:4px;background:#8e44ad;color:#fff;border:none;border-radius:4px;padding:9px;cursor:pointer;font-weight:600;">📍 Użyj mojej lokalizacji GPS</button>
 
         <details open>
-            <summary>⚙️ Wagi wpływu na hałas</summary>
-
-            <div class="set-row"><label>Drogi szybkiego ruchu</label>
-                <input type="range" id="w_szybki" min="0.5" max="3" step="0.1" value="2.0">
-                <span class="val" id="w_szybki_v">2.0</span></div>
-            <div class="set-row"><label>Drogi krajowe</label>
-                <input type="range" id="w_krajowa" min="0.5" max="3" step="0.1">
-                <span class="val" id="w_krajowa_v">1.5</span></div>
-            <div class="set-row"><label>Drogi wojewódzkie</label>
-                <input type="range" id="w_wojew" min="0.5" max="3" step="0.1" value="1.0">
-                <span class="val" id="w_wojew_v">1.0</span></div>
-            <div class="set-row"><label>Drogi lokalne</label>
-                <input type="range" id="w_lokalna" min="0.5" max="3" step="0.1" value="0.5">
-                <span class="val" id="w_lokalna_v">0.5</span></div>
-
-            <hr style="border:none;border-top:1px solid #eee;margin:10px 0;">
-
-            <div class="set-row"><label>Kolej (główna)</label>
-                <input type="range" id="w_kolej" min="0.5" max="3" step="0.1" value="1.8">
-                <span class="val" id="w_kolej_v">1.8</span></div>
-            <div class="set-row"><label>Kolej miejska / tramwaj</label>
-                <input type="range" id="w_miejska" min="0.5" max="3" step="0.1" value="1.3">
-                <span class="val" id="w_miejska_v">1.3</span></div>
-
-            <hr style="border:none;border-top:1px solid #eee;margin:10px 0;">
+            <summary>⚙️ Ustawienia analizy</summary>
 
             <div class="set-row"><label>Zasięg analizy (m)</label>
                 <input type="range" id="radius" min="500" max="3000" step="100" value="1500">
@@ -222,6 +198,12 @@
     const CUTOFF = {
         szybki: 2000, krajowa: 1000, wojew: 500, lokalna: 250,
         kolej: 2000, miejska: 1000
+    };
+
+    // Wagi domyślne (suwaki usunięte z UI)
+    const WEIGHTS = {
+        szybki: 2.0, krajowa: 1.5, wojew: 1.0, lokalna: 0.5,
+        kolej: 1.8, miejska: 1.3
     };
 
     // Overpass zwraca geometry jako tablicę obiektów {lat, lon}
@@ -388,43 +370,17 @@
     // Opisowa ocena najbardziej uciążliwego źródła
     function buildAssessment(d, sources, st) {
         const dM = Math.round(d.dist);
-        const cat = GROUP_LABEL[d.group].toLowerCase();
+        const grp = GROUP_LABEL[d.group].toLowerCase();
         const nm = (d.name === GROUP_LABEL[d.group]) ? '' : ' ' + d.name;
-        let lead;
-        if (dM < 200) lead = `W bezpośrednim sąsiedztwie (${dM} m) przebiega ${cat}${nm}.`;
-        else if (dM < 800) lead = `Ok. ${dM} m stąd znajduje się ${cat}${nm}.`;
-        else lead = `W odległości ok. ${dM} m przebiega ${cat}${nm}.`;
-
-        let mid;
-        if (d.group === 'szybki' || d.group === 'kolej') {
-            mid = 'Przy takim szlaku ruch jest zazwyczaj duży i ciągły – hałas (szum opon, silników i przejeżdżających pojazdów) może być słyszalny niemal bez przerwy, zwłaszcza przy otwartych oknach i w nocy.';
-        } else if (d.group === 'krajowa') {
-            mid = 'To droga o znacznym natężeniu ruchu; hałas może przeszkadzać przy otwartych oknach, szczególnie w godzinach szczytu.';
-        } else if (d.group === 'wojew') {
-            mid = 'Droga wojewódzka generuje sporadyczniejszy, ale wyraźny ruch – słyszalny głównie przy otwartych oknach.';
-        } else {
-            mid = 'To szlak lokalny; hałas jest raczej sporadyczny i zazwyczaj słyszalny tylko przy otwartych oknach.';
-        }
-
-        let terrain = '';
-        if (st.terrain && d.rise !== null) {
-            if (d.reduction > 0) {
-                terrain = ` Teren wznosi się jednak między Tobą a szlakiem (wał ok. ${d.rise} m), co naturalnie osłania hałas o ok. ${Math.round(d.reduction * 100)}%.`;
-            } else {
-                terrain = ' Teren jest płaski, więc nie ma naturalnej osłony akustycznej.';
-            }
-        }
-        if (d.building_note) {
-            terrain += ` Dodatkowo zabudowa między punktem a szlakiem działa jak naturalny ekran akustyczny (obniżenie w ujęciu uśrednionym o ok. ${d.building_note} dB; w bezpośrednim cieniu za budynkami spadek jest znacznie większy).`;
-        }
-
-        const others = sources.filter(s => s !== d &&
-            (s.energy * s.terrainFactor) > 0.1 * d.energy * d.terrainFactor);
-        let extra = '';
-        if (others.length) extra = ` W pobliżu są też inne szlaki (${others.length}), które łącznie podnoszą tło hałasu.`;
-        if (d.level > 56) extra += ` Poziom hałasu przy tym szlaku (ok. ${Math.round(d.level)} dB) przekracza dopuszczalne 56 dB w nocy w strefie mieszkalnej jednorodzinnej.`;
-
-        return lead + ' ' + mid + terrain + extra;
+        let intensity;
+        if (d.group === 'szybki' || d.group === 'kolej') intensity = 'o bardzo dużym natężeniu ruchu';
+        else if (d.group === 'krajowa') intensity = 'o znacznym natężeniu ruchu';
+        else if (d.group === 'wojew') intensity = 'o umiarkowanym ruchu';
+        else intensity = 'o niewielkim ruchu';
+        let txt = `Największym źródłem hałasu jest oddalona o ${dM} m ${grp}${nm}. To droga ${intensity}; hałas może przeszkadzać przy otwartych oknach, szczególnie w godzinach szczytu.`;
+        const others = sources.length - 1;
+        if (others > 0) txt += ` W pobliżu są też inne szlaki (${others}), które łącznie podnoszą tło hałasu.`;
+        return txt;
     }
 
     // ---------------- API: Nominatim ----------------
@@ -479,7 +435,7 @@
 
     // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-    console.log('CISZA-APP v2026-08-24e loaded');
+    console.log('CISZA-APP v2026-08-24f loaded');
 
     async function opQuery(q) {
         // 1) Bezpośrednio z przeglądarki (IP użytkownika; api.de/osm.ch odsyłają CORS *).
@@ -631,16 +587,6 @@
     function readSettings() {
         return {
             radius: parseInt(document.getElementById('radius').value),
-            roadW: {
-                szybki: +document.getElementById('w_szybki').value,
-                krajowa: +document.getElementById('w_krajowa').value,
-                wojew: +document.getElementById('w_wojew').value,
-                lokalna: +document.getElementById('w_lokalna').value
-            },
-            railW: {
-                kolej: +document.getElementById('w_kolej').value,
-                miejska: +document.getElementById('w_miejska').value
-            },
             terrain: document.getElementById('terrain').checked,
             barrier: +document.getElementById('barrier').value
         };
@@ -694,7 +640,7 @@
             if (base === undefined) continue;
             const group = classify(tag, kind);
             if (!group) continue;
-            const weight = (kind === 'road' ? st.roadW : st.railW)[group];
+            const weight = WEIGHTS[group];
 
             // najbliższy punkt i odległość wzdłuż całej drogi
             let best = { dist: Infinity, closest: null };
@@ -800,18 +746,18 @@
                 .filter(g => g && isFinite(g[0]) && isFinite(g[1]))).filter(p => p.length >= 3);
             coneLayer.clearLayers();
             for (const s of sources) {
+                const key = s.group + '|' + s.name;
                 const tri = [[lat, lng], s.bc[0], s.bc[1]];
                 const triArea = polyAreaProj(tri.map(p => project(p[0], p[1], lat, lng)));
                 const inter = triangleScreenArea(tri, polys, lat, lng);
                 const frac = triArea > 0 ? Math.min(0.95, inter / triArea) : 0;
                 s.screenFrac = frac;
                 s.buildingFactor = screenFactorFromFrac(frac);
-                if (s.dist <= 1500) {
-                    const col = frac > 0.4 ? '#1e8449' : frac > 0.15 ? '#e67e22' : '#c0392b';
-                    L.polygon(tri, { color: col, weight: 1, fillColor: col, fillOpacity: 0.18 })
-                        .bindTooltip(`${s.name}: budynki w stożku ${(frac * 100).toFixed(0)}%`)
-                        .addTo(coneLayer);
-                }
+                const col = frac > 0.4 ? '#1e8449' : frac > 0.15 ? '#e67e22' : '#c0392b';
+                const poly = L.polygon(tri, { color: col, weight: 1, fillColor: col, fillOpacity: 0.18 })
+                    .bindTooltip(`${s.name}: budynki w stożku ${(frac * 100).toFixed(0)}%`)
+                    .addTo(coneLayer);
+                coneByKey[key] = poly;
             }
             coneLayer.addTo(map);
         }
@@ -862,6 +808,7 @@
 
         const top = sources.slice(0, 6).map(s => ({
             name: s.name, type: GROUP_TYPE[s.group], category: GROUP_LABEL[s.group],
+            key: s.group + '|' + s.name,
             distance_m: Math.round(s.dist),
             base_pct: s.basePct,
             red_dist: s.redDist,
@@ -911,7 +858,7 @@
             const budCell = redCell(s.red_bud) +
                 (s.building_reduction_db ? ` <span class="pill green">−${s.building_reduction_db} dB</span>` : '');
             tr.innerHTML =
-                `<td><b>${s.name}</b><br><span style="font-size:0.74em;color:#7f8c8d;">${s.type} · ${s.distance_m} m · ${cone}</span></td>` +
+                `<td><b style="cursor:pointer;color:#21618c;text-decoration:underline;" onclick="focusCone('${s.key}')" title="Pokaż na mapie">${s.name}</b><br><span style="font-size:0.74em;color:#7f8c8d;">${s.type} · ${s.distance_m} m · ${cone}</span></td>` +
                 `<td>${s.base_pct}%</td>` +
                 `<td>${redCell(s.red_dist)}</td>` +
                 `<td>${budCell}</td>` +
@@ -940,7 +887,20 @@
     L.control.scale({ imperial: false, maxWidth: 200 }).addTo(map);
     // Warstwa stożków akustycznych (rysowana w analyze)
     const coneLayer = L.layerGroup().addTo(map);
+    const coneByKey = {};
     map.on('click', e => analyze(e.latlng.lat, e.latlng.lng));
+
+    // Kliknięcie nazwy szlaku w tabeli -> przybliżenie jego stożka na mapie
+    function focusCone(key) {
+        const poly = coneByKey[key];
+        if (!poly) return;
+        map.fitBounds(poly.getBounds(), { maxZoom: 17, padding: [40, 40] });
+        poly.bringToFront();
+        poly.setStyle({ weight: 3, fillOpacity: 0.45 });
+        poly.openTooltip();
+        clearTimeout(poly._t);
+        poly._t = setTimeout(() => poly.setStyle({ weight: 1, fillOpacity: 0.18 }), 2500);
+    }
 
     document.querySelectorAll('input[type=range]').forEach(r => {
         r.addEventListener('input', () => {
