@@ -94,7 +94,7 @@
 
     <div id="sidebar">
         <h1>🌿 W poszukiwaniu ciszy</h1>
-        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24d]</span></p>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24e]</span></p>
 
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
@@ -158,9 +158,14 @@
             <div id="terrainNote"></div>
 
             <table id="srcTable" style="margin-top:12px;">
-                <thead><tr><th>Szlak</th><th>Typ</th><th>Odległość</th><th>Wał</th><th>Uciążliwość</th></tr></thead>
+                <thead><tr><th>Szlak</th><th>Hałas<br> bazowy</th><th>Redukcja:<br>odległość</th><th>Redukcja:<br>budynki (stożek)</th><th>Redukcja:<br>teren (wał)</th><th>Końcowy<br>odczuwalny</th></tr></thead>
                 <tbody></tbody>
             </table>
+            <div class="small" style="margin-top:8px;">
+                <b>Stożek akustyczny:</b> dla każdego szlaku wyznaczamy trójkąt między Twoim punktem a odcinkiem drogi
+                i sprawdzamy, jaki % jego powierzchni zajmują budynki (ekran akustyczny) – widoczne też na mapie.
+                Hałas końcowy = bazowy × (1−tłumienie odległości) × (1−tłumienie przeszkód).
+            </div>
         </div>
 
         <div class="small">
@@ -256,6 +261,108 @@
         const groups = kind === 'road' ? ROAD_GROUPS : RAIL_GROUPS;
         for (const g in groups) if (groups[g].includes(tag)) return g;
         return null;
+    }
+
+    // ---------------- Analiza stożka akustycznego (uproszczony ray-tracing) ----------------
+    // Pole wielokąta (punkty [x,y] w metrach, przestrzeń płaska)
+    function polyAreaProj(poly) {
+        if (!poly || poly.length < 3) return 0;
+        let A = 0;
+        for (let i = 0; i < poly.length; i++) {
+            const p = poly[i], q = poly[(i + 1) % poly.length];
+            A += p[0] * q[1] - q[0] * p[1];
+        }
+        return Math.abs(A) / 2;
+    }
+    // Przecięcie wielokąta z wypukłym clip (Sutherland–Hodgman); clip musi być CCW
+    function clipConvex(subject, clip) {
+        let cl = clip;
+        let sa = 0;
+        for (let i = 0; i < cl.length; i++) {
+            const p = cl[i], q = cl[(i + 1) % cl.length];
+            sa += p[0] * q[1] - q[0] * p[1];
+        }
+        if (sa < 0) cl = cl.slice().reverse();
+        let out = subject;
+        for (let i = 0; i < cl.length; i++) {
+            const A = cl[i], B = cl[(i + 1) % cl.length];
+            const input = out; out = [];
+            if (!input.length) break;
+            const nx = -(B[1] - A[1]), ny = (B[0] - A[0]);
+            const isIn = (p) => (nx * (p[0] - A[0]) + ny * (p[1] - A[1])) >= 0;
+            const inter = (p, q) => {
+                const d = (p[0] - q[0]) * (B[1] - A[1]) - (p[1] - q[1]) * (B[0] - A[0]);
+                if (Math.abs(d) < 1e-12) return q;
+                const t = ((A[0] - p[0]) * (B[1] - A[1]) - (A[1] - p[1]) * (B[0] - A[0])) / d;
+                return [p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])];
+            };
+            for (let j = 0; j < input.length; j++) {
+                const cur = input[j], prev = input[(j + input.length - 1) % input.length];
+                const curIn = isIn(cur), prevIn = isIn(prev);
+                if (curIn) { if (!prevIn) out.push(inter(prev, cur)); out.push(cur); }
+                else if (prevIn) { out.push(inter(prev, cur)); }
+            }
+        }
+        return out;
+    }
+    // Ułamek pola trójkąta A-B-C (w metrach) zajęty przez budynki
+    function triangleScreenArea(triLL, polysLL, lat0, lon0) {
+        const tri = triLL.map(p => project(p[0], p[1], lat0, lon0));
+        const triArea = polyAreaProj(tri);
+        if (triArea <= 0 || !polysLL || !polysLL.length) return 0;
+        let inter = 0;
+        for (const pll of polysLL) {
+            const proj = pll.map(p => project(p[0], p[1], lat0, lon0)).filter(g => g && isFinite(g[0]));
+            if (proj.length < 3) continue;
+            const cl = clipConvex(proj, tri);
+            if (cl.length >= 3) inter += polyAreaProj(cl);
+        }
+        return inter;
+    }
+    // Kąt rozwarcia stożka (stopnie) między P a B,C w przestrzeni metrycznej
+    function coneAngleDeg(P, B, C, lat0, lon0) {
+        const pp = project(P[0], P[1], lat0, lon0);
+        const bb = project(B[0], B[1], lat0, lon0);
+        const cc = project(C[0], C[1], lat0, lon0);
+        const v1 = [bb[0] - pp[0], bb[1] - pp[1]], v2 = [cc[0] - pp[0], cc[1] - pp[1]];
+        const d = v1[0] * v2[0] + v1[1] * v2[1];
+        const m = Math.hypot(v1[0], v1[1]) * Math.hypot(v2[0], v2[1]);
+        if (m < 1e-6) return 180;
+        let c = Math.max(-1, Math.min(1, d / m));
+        return Math.acos(c) * 180 / Math.PI;
+    }
+    // Odcinek drogi (B-C) wokół najbliższego punktu – podstawa stożka
+    function roadSegment(geom, closest, halfMeters, lat0, lon0) {
+        let ci = 0, bd = Infinity;
+        const cP = project(closest[0], closest[1], lat0, lon0);
+        for (let i = 0; i < geom.length; i++) {
+            const a = project(geom[i][0], geom[i][1], lat0, lon0);
+            const dd = (a[0] - cP[0]) ** 2 + (a[1] - cP[1]) ** 2;
+            if (dd < bd) { bd = dd; ci = i; }
+        }
+        let lo = ci, hi = ci, acc = 0;
+        while (acc < halfMeters && (lo > 0 || hi < geom.length - 1)) {
+            const pa = project(geom[Math.max(0, lo - 1)][0], geom[Math.max(0, lo - 1)][1], lat0, lon0);
+            const pb = project(geom[lo][0], geom[lo][1], lat0, lon0);
+            const pc = project(geom[hi][0], geom[hi][1], lat0, lon0);
+            const pd = project(geom[Math.min(geom.length - 1, hi + 1)][0], geom[Math.min(geom.length - 1, hi + 1)][1], lat0, lon0);
+            const dL = Math.hypot(pa[0] - pb[0], pa[1] - pb[1]);
+            const dR = Math.hypot(pc[0] - pd[0], pc[1] - pd[1]);
+            if (lo > 0 && (hi >= geom.length - 1 || dL <= dR)) { acc += dL; lo--; }
+            else if (hi < geom.length - 1) { acc += dR; hi++; }
+            else break;
+        }
+        return [geom[lo], geom[hi]];
+    }
+    // Poziom z uwzględnieniem kąta widzenia stożka (α→180° dla długiej drogi = brak korekty)
+    function lineLevelAlpha(L0, d, alphaDeg) {
+        const a = Math.max(1, Math.min(180, alphaDeg));
+        return lineLevel(L0, d) + 10 * Math.log10(a / 180);
+    }
+    const SHIELD = 0.07; // cień akustyczny za budynkiem-ekranem
+    function screenFactorFromFrac(f) {
+        f = Math.max(0, Math.min(0.95, f));
+        return (1 - f) + f * SHIELD;
     }
 
     // Pamięć podręczna przeglądarki – TRWAŁA (localStorage), by wracając do
@@ -372,7 +479,7 @@
 
     // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-    console.log('CISZA-APP v2026-08-24d loaded');
+    console.log('CISZA-APP v2026-08-24e loaded');
 
     async function opQuery(q) {
         // 1) Bezpośrednio z przeglądarki (IP użytkownika; api.de/osm.ch odsyłają CORS *).
@@ -598,15 +705,19 @@
             if (!isFinite(best.dist)) continue;
             if (best.dist > CUTOFF[group]) continue;
 
-            const l = lineLevel(base, best.dist);
+            // Stożek akustyczny: podstawa = odcinek drogi wokół najbliższego punktu
+            const bc = roadSegment(geom, best.closest, 100, lat, lng);
+            const alpha = coneAngleDeg([lat, lng], bc[0], bc[1], lat, lng);
+            const l = lineLevelAlpha(base, best.dist, alpha);
             const energy = weight * Math.pow(10, l / 10);
             const name = tags.name || GROUP_LABEL[group];
 
             raw.push({
                 name, kind, group, weight, geom,
-                dist: best.dist, closest: best.closest,
-                level: l, energy, terrainFactor: 1, reduction: 0, rise: null,
-                buildingFactor: 1
+                dist: best.dist, closest: best.closest, bc,
+                level: l, base, alpha, energy,
+                terrainFactor: 1, reduction: 0, rise: null,
+                buildingFactor: 1, screenFrac: 0
             });
         }
 
@@ -667,33 +778,42 @@
             } else {
                 terrainNote = 'Brak dostępu do danych o wysokości terenu (API niedostępne).';
             }
+        }
 
-            // --- Osłona budynkami (ekran akustyczny dla źródeł liniowych) ---
-            // Jedno wspólne zapytanie o budynki dla wszystkich kandydatów (szybciej).
-            const buildCand = sources
-                .sort((a, b) => b.energy - a.energy)
-                .slice(0, 2); // tylko najważniejsze, by nie obciążać Overpass
-            let sharedPolys = [];
-            if (buildCand.length) {
-                let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
-                const pts = [[lat, lng]];
-                for (const s of buildCand) for (const g of s.geom) pts.push(g);
-                for (const pt of pts) {
-                    minLat = Math.min(minLat, pt[0]); maxLat = Math.max(maxLat, pt[0]);
-                    minLon = Math.min(minLon, pt[1]); maxLon = Math.max(maxLon, pt[1]);
+        // --- Stożek akustyczny: przesłonięcie budynkami (niezależnie od terenu) ---
+        if (sources.length) {
+            stepLoader('2b/3 Analizuję stożek akustyczny (budynki na linii widoku)…');
+            let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
+            const pts = [[lat, lng]];
+            for (const s of sources) { pts.push(s.closest); for (const g of s.geom) pts.push(g); }
+            for (const pt of pts) {
+                minLat = Math.min(minLat, pt[0]); maxLat = Math.max(maxLat, pt[0]);
+                minLon = Math.min(minLon, pt[1]); maxLon = Math.max(maxLon, pt[1]);
+            }
+            const dLatB = 250 / 111320, dLonB = 250 / (111320 * Math.cos(lat * Math.PI / 180));
+            const bbox = {
+                s: (minLat - dLatB).toFixed(5), n: (maxLat + dLatB).toFixed(5),
+                w: (minLon - dLonB).toFixed(5), e: (maxLon + dLonB).toFixed(5)
+            };
+            const els = await fetchBuildings(bbox);
+            const polys = els.map(el => (el.geometry || []).map(nodeLatLon)
+                .filter(g => g && isFinite(g[0]) && isFinite(g[1]))).filter(p => p.length >= 3);
+            coneLayer.clearLayers();
+            for (const s of sources) {
+                const tri = [[lat, lng], s.bc[0], s.bc[1]];
+                const triArea = polyAreaProj(tri.map(p => project(p[0], p[1], lat, lng)));
+                const inter = triangleScreenArea(tri, polys, lat, lng);
+                const frac = triArea > 0 ? Math.min(0.95, inter / triArea) : 0;
+                s.screenFrac = frac;
+                s.buildingFactor = screenFactorFromFrac(frac);
+                if (s.dist <= 1500) {
+                    const col = frac > 0.4 ? '#1e8449' : frac > 0.15 ? '#e67e22' : '#c0392b';
+                    L.polygon(tri, { color: col, weight: 1, fillColor: col, fillOpacity: 0.18 })
+                        .bindTooltip(`${s.name}: budynki w stożku ${(frac * 100).toFixed(0)}%`)
+                        .addTo(coneLayer);
                 }
-                const dLatB = 200 / 111320, dLonB = 200 / (111320 * Math.cos(lat * Math.PI / 180));
-                const bbox = {
-                    s: (minLat - dLatB).toFixed(5), n: (maxLat + dLatB).toFixed(5),
-                    w: (minLon - dLonB).toFixed(5), e: (maxLon + dLonB).toFixed(5)
-                };
-                const els = await fetchBuildings(bbox);
-                sharedPolys = els.map(el => (el.geometry || []).map(nodeLatLon)
-                    .filter(g => g && isFinite(g[0]) && isFinite(g[1]))).filter(p => p.length >= 3);
             }
-            for (const s of buildCand) {
-                s.buildingFactor = await buildingFactorFor(s, lat, lng, sharedPolys);
-            }
+            coneLayer.addTo(map);
         }
 
         // --- Wynik: bierzemy pod uwagę najbardziej uciążliwe źródło ---
@@ -713,15 +833,25 @@
             assessment = 'W promieniu analizy nie wykryto istotnych dróg ani linii kolejowych – miejsce zapowiada się bardzo cicho.';
         }
 
-        // Uciążliwość każdego źródła w skali 0-100
+        // Uciążliwość każdego źródła w skali 0-100 + rozbicie na czynniki (stożek)
+        const clampPct = (x) => Math.max(0, Math.min(100, Math.round(x)));
         for (const s of sources) {
             const eff = s.energy * s.terrainFactor * s.buildingFactor;
             const lvl = 10 * Math.log10(eff + 1e-9);
             s.burden = Math.max(0, Math.min(100, Math.round((lvl - AMBIENT_DB) / (REFERENCE_DB - AMBIENT_DB) * 100)));
             if (s.buildingFactor < 1) {
-                const dB = -10 * Math.log10(s.buildingFactor);
-                s.building_note = Math.round(dB);
+                s.building_note = Math.round(-10 * Math.log10(s.buildingFactor));
             }
+            // Model procentowy (H_końc = H_baz * (1-T_odl) * (1-T_przeszkody))
+            const basePct = clampPct((s.base - AMBIENT_DB) / (REFERENCE_DB - AMBIENT_DB) * 100);
+            const distPct = clampPct((s.level - AMBIENT_DB) / (REFERENCE_DB - AMBIENT_DB) * 100);
+            const afterBud = s.level + 10 * Math.log10(s.buildingFactor || 1);
+            const afterBudPct = clampPct((afterBud - AMBIENT_DB) / (REFERENCE_DB - AMBIENT_DB) * 100);
+            s.basePct = basePct;
+            s.redDist = basePct - distPct;            // tłumienie przez odległość (stożek/α)
+            s.redBud = distPct - afterBudPct;         // przeszkody: budynki w stożku
+            s.redTer = afterBudPct - s.burden;        // przeszkody: teren (wał)
+            s.finalPct = s.burden;
         }
 
         stepLoader('3/3 Obliczam wynik…');
@@ -733,8 +863,12 @@
         const top = sources.slice(0, 6).map(s => ({
             name: s.name, type: GROUP_TYPE[s.group], category: GROUP_LABEL[s.group],
             distance_m: Math.round(s.dist),
-            weight: s.weight,
-            terrain_reduction_pct: Math.round(s.reduction * 100),
+            base_pct: s.basePct,
+            red_dist: s.redDist,
+            red_bud: s.redBud,
+            red_ter: s.redTer,
+            final_pct: s.finalPct,
+            screen_pct: s.screenFrac != null ? Math.round(s.screenFrac * 100) : null,
             burden: s.burden,
             building_reduction_db: s.building_note || null
         }));
@@ -764,21 +898,29 @@
 
         const tb = document.querySelector('#srcTable tbody');
         tb.innerHTML = '';
+        const redCell = (v) => v > 0
+            ? `<span class="pill green">−${v}%</span>`
+            : `<span class="pill red">0%</span>`;
         (d.sources || []).forEach(s => {
             const tr = document.createElement('tr');
-            const wal = s.terrain_reduction_pct > 0
-                ? `<span class="pill green">−${s.terrain_reduction_pct}%</span>`
-                : `<span class="pill red">brak</span>`;
-            const burdenColor = s.burden >= 70 ? '#c0392b'
-                : s.burden >= 40 ? '#e67e22' : '#27ae60';
-            const burdenCell = `<span style="color:${burdenColor};font-weight:600;">${s.burden}/100</span>` +
+            const burdenColor = s.final_pct >= 70 ? '#c0392b'
+                : s.final_pct >= 40 ? '#e67e22' : '#27ae60';
+            const cone = s.screen_pct != null
+                ? `<span style="font-size:0.74em;color:#7f8c8d;">stożek: ${s.screen_pct}% zabudowy</span>`
+                : '';
+            const budCell = redCell(s.red_bud) +
                 (s.building_reduction_db ? ` <span class="pill green">−${s.building_reduction_db} dB</span>` : '');
-            tr.innerHTML = `<td>${s.name}</td><td>${s.type}</td>` +
-                `<td>${s.distance_m} m</td><td>${wal}</td><td>${burdenCell}</td>`;
+            tr.innerHTML =
+                `<td><b>${s.name}</b><br><span style="font-size:0.74em;color:#7f8c8d;">${s.type} · ${s.distance_m} m · ${cone}</span></td>` +
+                `<td>${s.base_pct}%</td>` +
+                `<td>${redCell(s.red_dist)}</td>` +
+                `<td>${budCell}</td>` +
+                `<td>${redCell(s.red_ter)}</td>` +
+                `<td><span style="color:${burdenColor};font-weight:700;">${s.final_pct}/100</span></td>`;
             tb.appendChild(tr);
         });
         if (!d.sources.length)
-            tb.innerHTML = '<tr><td colspan="5" style="color:#7f8c8d;">Brak szlaków w zasięgu.</td></tr>';
+            tb.innerHTML = '<tr><td colspan="6" style="color:#7f8c8d;">Brak szlaków w zasięgu.</td></tr>';
     }
 
     // ---------------- Mapa ----------------
@@ -796,6 +938,8 @@
         null, { position: 'topright' }
     ).addTo(map);
     L.control.scale({ imperial: false, maxWidth: 200 }).addTo(map);
+    // Warstwa stożków akustycznych (rysowana w analyze)
+    const coneLayer = L.layerGroup().addTo(map);
     map.on('click', e => analyze(e.latlng.lat, e.latlng.lng));
 
     document.querySelectorAll('input[type=range]').forEach(r => {
