@@ -112,14 +112,18 @@ async function main() {
   }
   await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
 
-  const manifest = {
-    generated: new Date().toISOString(),
-    originLat: STATIC_ORIGIN_LAT, originLon: STATIC_ORIGIN_LON,
-    cell: STATIC_CELL, radius: RADIUS, bbox: BBOX,
-    tiles: count, endpoint: OVERPASS
-  };
-  await writeFile(join(TILES_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2));
-  console.log(`Wygenerowano ${count} kafelków.`);
+  if (count > 0) {
+    const manifest = {
+      generated: new Date().toISOString(),
+      originLat: STATIC_ORIGIN_LAT, originLon: STATIC_ORIGIN_LON,
+      cell: STATIC_CELL, radius: RADIUS, bbox: BBOX,
+      tiles: count, endpoint: OVERPASS
+    };
+    await writeFile(join(TILES_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2));
+    console.log(`Wygenerowano ${count} kafelków.`);
+  } else {
+    console.log('Brak danych z Overpass – nie publikuję manifestu (kafelki puste).');
+  }
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
