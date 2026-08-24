@@ -94,7 +94,7 @@
 
     <div id="sidebar">
         <h1>🌿 W poszukiwaniu ciszy</h1>
-        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24h]</span></p>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24i]</span></p>
 
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
@@ -526,8 +526,8 @@
 
     // Endpointy bezpośrednie z włączonym CORS (rezerwa, gdy funkcja proxy nie działa)
     const DIRECT_OVERPASS = [
-        'https://overpass.osm.ch/api/interpreter',
         'https://overpass-api.de/api/interpreter',
+        'https://overpass.osm.ch/api/interpreter',
         'https://overpass.kumi.systems/api/interpreter',
         'https://overpass.private.coffee/api/interpreter',
         'https://overpass.openstreetmap.ru/api/interpreter'
@@ -535,45 +535,54 @@
 
     // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-    console.log('CISZA-APP v2026-08-24h loaded');
+    console.log('CISZA-APP v2026-08-24i loaded');
 
     async function opQuery(q) {
-        // Wyścig: wszystkie mirror-y Overpass równolegle, wygrywa pierwszy działający.
-        // Każde zapytanie ma limit 15s; po sukcesie przerywamy pozostałe (AbortController).
         const controllers = [];
-        const mkJob = (ep) => {
+        const tryEp = (ep) => new Promise((resolve, reject) => {
             const c = new AbortController();
             controllers.push(c);
             const timer = setTimeout(() => c.abort(), 15000);
-            return (async () => {
-                try {
-                    const res = await fetch(ep, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                        body: 'data=' + encQ(q),
-                        signal: c.signal
-                    });
-                    if (!res.ok) throw new Error(ep + ' HTTP ' + res.status);
-                    const j = await res.json();
-                    controllers.forEach(x => x.abort());
-                    return j;
-                } finally { clearTimeout(timer); }
-            })().catch(e => { c.abort(); throw e; });
-        };
-        try {
-            return await Promise.any(DIRECT_OVERPASS.map(mkJob));
-        } catch (_) {
-            controllers.forEach(c => c.abort());
-        }
-        // Rezerwa: funkcja Netlify (serwerowo, bez CORS, też robi wyścig backendów)
-        try {
+            fetch(ep, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'data=' + encQ(q),
+                signal: c.signal
+            })
+                .then(res => { if (!res.ok) throw new Error(ep + ' HTTP ' + res.status); return res.json(); })
+                .then(j => { clearTimeout(timer); resolve(j); })
+                .catch(e => { clearTimeout(timer); reject(e); });
+        });
+
+        // Wyścig: wygrywa pierwszy mirror zwracający NIEPUSTY wynik.
+        // Puste odpowiedzi (broken mirror-y, np. overpass.osm.ch) są ignorowane,
+        // bo inaczej fałszywie sygnalizowałyby „brak danych".
+        const fallback = async () => {
             const r = await fetch('/.netlify/functions/overpass', {
                 method: 'POST', body: JSON.stringify({ q }),
                 headers: { 'Content-Type': 'application/json' }
             });
-            if (r.ok) return await r.json();
-        } catch (e) { /* ignoruj */ }
-        throw new Error('Overpass niedostępny na wszystkich serwerach (przeciążony?). Spróbuj ponownie za chwilę.');
+            if (!r.ok) throw new Error('netlify HTTP ' + r.status);
+            const j = await r.json();
+            if (!j || !j.elements || !j.elements.length) throw new Error('netlify pusty');
+            return j;
+        };
+
+        return new Promise((resolve, reject) => {
+            DIRECT_OVERPASS.forEach(ep => {
+                tryEp(ep).then(j => {
+                    if (j && j.elements && j.elements.length) {
+                        controllers.forEach(c => c.abort());
+                        resolve(j);
+                    }
+                }).catch(() => { /* mirror nie zadziałał */ });
+            });
+            // Po 14s: jeśli nic nie przyszło z przeglądarki, próbuj rezerwy (Netlify).
+            setTimeout(() => {
+                controllers.forEach(c => c.abort());
+                fallback().then(resolve).catch(() => resolve({ elements: [] }));
+            }, 14000);
+        });
     }
 
     async function fetchWays(lat, lon, radius) {
