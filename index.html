@@ -94,7 +94,7 @@
 
     <div id="sidebar">
         <h1>🌿 W poszukiwaniu ciszy</h1>
-        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24o]</span></p>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24p]</span></p>
 
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
@@ -209,7 +209,7 @@
     // Model dyskretyzacji + ray-casting (źródło liniowe jako setki punktów)
     const SEG_STEP = 20;          // długość segmentu drogi [m]
     const BUILDING_ATT = 12;      // maks. tłumienie [dB] za przeszkodą (budynkiem)
-    const BUILDING_RADIUS = 600;  // promień pobierania budynków wokół punktu [m]
+    const BUILDING_RADIUS = 400;  // promień pobierania budynków wokół punktu [m]
 
     // Overpass zwraca geometry jako tablicę obiektów {lat, lon}
     function nodeLatLon(n) {
@@ -564,7 +564,7 @@
 
     // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-    console.log('CISZA-APP v2026-08-24o loaded');
+    console.log('CISZA-APP v2026-08-24p loaded');
 
     async function opQuery(q) {
         const RACE_TIMEOUT = 10000;
