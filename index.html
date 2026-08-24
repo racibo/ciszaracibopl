@@ -94,7 +94,7 @@
 
     <div id="sidebar">
         <h1>🌿 W poszukiwaniu ciszy</h1>
-        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24i]</span></p>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24j]</span></p>
 
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
@@ -266,7 +266,9 @@
         return inside;
     }
 
-    // Czy odcinek a->b przecina wielokąt (bbox prefilter + krawędzie + wnętrze)
+    // Czy odcinek a->b przecina wielokąt (bbox prefilter + krawędzie).
+    // Uwaga: nie testujemy, czy punkt a (GPS) leży wewnątrz budynku – gdyby tak
+    // było, każdy promień byłby fałszywie "zagłuszony" i droga wyszłaby 100% osłonięta.
     function rayHitsPolygon(a, b, poly) {
         const minLat = Math.min(a[0], b[0]), maxLat = Math.max(a[0], b[0]);
         const minLng = Math.min(a[1], b[1]), maxLng = Math.max(a[1], b[1]);
@@ -276,7 +278,6 @@
             if (q[1] < pminLng) pminLng = q[1]; if (q[1] > pmaxLng) pmaxLng = q[1];
         }
         if (maxLat < pminLat || minLat > pmaxLat || maxLng < pminLng || minLng > pmaxLng) return false;
-        if (pointInRing(a, poly) || pointInRing(b, poly)) return true;
         for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
             if (segIntersect(a, b, poly[j], poly[i])) return true;
         }
@@ -535,40 +536,36 @@
 
     // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-    console.log('CISZA-APP v2026-08-24i loaded');
+    console.log('CISZA-APP v2026-08-24j loaded');
 
     async function opQuery(q) {
-        const controllers = [];
-        const tryEp = (ep) => new Promise((resolve, reject) => {
-            const c = new AbortController();
-            controllers.push(c);
-            const timer = setTimeout(() => c.abort(), 15000);
-            fetch(ep, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: 'data=' + encQ(q),
-                signal: c.signal
-            })
-                .then(res => { if (!res.ok) throw new Error(ep + ' HTTP ' + res.status); return res.json(); })
-                .then(j => { clearTimeout(timer); resolve(j); })
-                .catch(e => { clearTimeout(timer); reject(e); });
-        });
-
-        // Wyścig: wygrywa pierwszy mirror zwracający NIEPUSTY wynik.
-        // Puste odpowiedzi (broken mirror-y, np. overpass.osm.ch) są ignorowane,
-        // bo inaczej fałszywie sygnalizowałyby „brak danych".
-        const fallback = async () => {
-            const r = await fetch('/.netlify/functions/overpass', {
-                method: 'POST', body: JSON.stringify({ q }),
-                headers: { 'Content-Type': 'application/json' }
+        const RACE_TIMEOUT = 10000;
+        // Jedna próba: wyścig mirror-ów (pierwszy NIEPUSTY wynik wygrywa),
+        // po RACE_TIMEOUT rezerwa Netlify. Rozwiązuje puste/uszkodzone mirror-y.
+        const raceOverpass = () => new Promise((resolve, reject) => {
+            const controllers = [];
+            const tryEp = (ep) => new Promise((res, rej) => {
+                const c = new AbortController();
+                controllers.push(c);
+                const timer = setTimeout(() => c.abort(), RACE_TIMEOUT);
+                fetch(ep, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: 'data=' + encQ(q),
+                    signal: c.signal
+                })
+                    .then(r => { if (!r.ok) throw new Error(ep + ' HTTP ' + r.status); return r.json(); })
+                    .then(j => { clearTimeout(timer); res(j); })
+                    .catch(e => { clearTimeout(timer); rej(e); });
             });
-            if (!r.ok) throw new Error('netlify HTTP ' + r.status);
-            const j = await r.json();
-            if (!j || !j.elements || !j.elements.length) throw new Error('netlify pusty');
-            return j;
-        };
-
-        return new Promise((resolve, reject) => {
+            const fallback = async () => {
+                const r = await fetch('/.netlify/functions/overpass', {
+                    method: 'POST', body: JSON.stringify({ q }),
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                if (!r.ok) throw new Error('netlify HTTP ' + r.status);
+                return await r.json();
+            };
             DIRECT_OVERPASS.forEach(ep => {
                 tryEp(ep).then(j => {
                     if (j && j.elements && j.elements.length) {
@@ -577,12 +574,26 @@
                     }
                 }).catch(() => { /* mirror nie zadziałał */ });
             });
-            // Po 14s: jeśli nic nie przyszło z przeglądarki, próbuj rezerwy (Netlify).
             setTimeout(() => {
                 controllers.forEach(c => c.abort());
-                fallback().then(resolve).catch(() => resolve({ elements: [] }));
-            }, 14000);
+                fallback().then(resolve).catch(reject);
+            }, RACE_TIMEOUT);
         });
+
+        // Automatyczne ponawianie (Overpass bywa przeciążony → 504/timeout).
+        let lastErr = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                const j = await raceOverpass();
+                // Rate-limit / przeciążenie Overpass → remark + puste: powtórz próbę
+                if (j && j.remark && (!j.elements || !j.elements.length)) throw new Error(j.remark);
+                return j;
+            } catch (e) {
+                lastErr = e;
+                if (attempt < 2) await new Promise(r => setTimeout(r, 1500));
+            }
+        }
+        throw lastErr || new Error('Overpass niedostępny po 3 próbach');
     }
 
     async function fetchWays(lat, lon, radius) {
@@ -594,13 +605,15 @@
         return (json && json.elements) || [];
     }
 
+    let buildingFetchError = '';
     async function fetchBuildings(bbox) {
         const key = bbox.s + ',' + bbox.w + ',' + bbox.n + ',' + bbox.e;
         if (_bCache.has(key)) return _bCache.get(key);
         const { s, w, n, e } = bbox;
         const q = `[out:json][timeout:25];(way["building"](${s},${w},${n},${e}););out geom;`;
         let els = [];
-        try { const json = await opQuery(q); els = (json && json.elements) || []; } catch (e) { els = []; }
+        try { const json = await opQuery(q); els = (json && json.elements) || []; }
+        catch (e) { els = []; buildingFetchError = e.message || 'błąd pobierania zabudowy'; }
         _bCache.set(key, els);
         persistCache(_bCache, LS_BUILD);
         return els;
@@ -779,6 +792,9 @@
         const bEls = await fetchBuildings(bbox);
         const polys = bEls.map(el => (el.geometry || []).map(nodeLatLon)
             .filter(g => g && isFinite(g[0]) && isFinite(g[1]))).filter(g => g.length >= 3);
+        const buildingNote = buildingFetchError
+            ? ' ⚠️ Nie udało się pobrać zabudowy – osłona budynkowa została pominięta (wynik może być zawyżony).'
+            : '';
 
         // --- Pass 2: dyskretyzacja + rzucanie promieni (ray-casting) ---
         stepLoader('2b/3 Rzucam promienie i sumuję źródła liniowe…');
@@ -789,9 +805,12 @@
             if (agg.distMin > CUTOFF[c.group]) continue;
             const energy = c.weight * agg.energy;
             const level = 10 * Math.log10(energy + 1e-9);
+            // Tłumienie budynkowe: energochłonne (ważone energią), ograniczone do 12 dB,
+            // by droga nigdy nie wyszła jako 100% "cicha" tylko przez zabudowę.
             const barrierDb = agg.energyUnblocked > 0
-                ? Math.max(0, 10 * Math.log10(agg.energyUnblocked / agg.energy)) : 0;
-            const screenFrac = agg.total > 0 ? agg.blocked / agg.total : 0;
+                ? Math.min(12, Math.max(0, 10 * Math.log10(agg.energyUnblocked / agg.energy))) : 0;
+            const screenFrac = agg.energyUnblocked > 0
+                ? Math.min(0.95, Math.max(0, 1 - agg.energy / agg.energyUnblocked)) : 0;
             raw.push({
                 name: c.name, kind: c.kind, group: c.group, weight: c.weight, geom: c.geom,
                 dist: agg.distMin, closest: agg.closest, base: c.base,
@@ -950,7 +969,7 @@
 
         render({
             score: Math.round(score), level_db: Math.round(levelDb * 10) / 10,
-            assessment, terrain_note: terrainNote, sources: top
+            assessment, terrain_note: terrainNote + buildingNote, sources: top
         });
     }
 
