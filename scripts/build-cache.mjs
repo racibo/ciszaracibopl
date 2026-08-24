@@ -20,7 +20,7 @@ const TILES_DIR = join(ROOT, 'tiles');
 const STATIC_ORIGIN_LAT = 54.30;
 const STATIC_ORIGIN_LON = 18.40;
 const STATIC_CELL = 0.02;          // ~2.2 km
-const RADIUS = 1500;               // margines wokół komórki (pokrywa zasięg analizy)
+const RADIUS = 2000;               // margines wokół komórki (pokrywa zasięg analizy do 2000 m)
 const OVERPASS = 'https://overpass-api.de/api/interpreter';
 
 // Obszar: Trójmiasto + margines (Gdańsk–Gdynia–Sopot)
