@@ -94,7 +94,7 @@
 
     <div id="sidebar">
         <h1>🌿 W poszukiwaniu ciszy</h1>
-        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24k]</span></p>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24l]</span></p>
 
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
@@ -564,7 +564,7 @@
 
     // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-    console.log('CISZA-APP v2026-08-24k loaded');
+    console.log('CISZA-APP v2026-08-24l loaded');
 
     async function opQuery(q) {
         const RACE_TIMEOUT = 10000;
@@ -826,38 +826,53 @@
 
         // --- Pass 2: dyskretyzacja + rzucanie promieni (ray-casting) ---
         stepLoader('2b/3 Rzucam promienie i sumuję źródła liniowe…');
-        const raw = [];
+        // OSM często dzieli jedną ulicę na wiele way-ów. Grupujemy je po nazwie+typ
+        // i SUMUJEMY ich wkład (cała długość źródła liniowego), zamiast trzymać
+        // tylko jeden fragment (to powodowało "wybiórcze odcinki").
+        const accByKey = new Map();
         for (const c of cands) {
             const agg = aggregateLine(p, c.geom, c.base, polys, BUILDING_ATT, ANALYSIS_R);
             if (agg.segs.length === 0) continue;
             if (agg.distMin > CUTOFF[c.group]) continue;
-            const energy = c.weight * agg.energy;
+            const key = c.name
+                ? c.group + '|' + c.name
+                : c.group + '|__' + Math.round(agg.closest[0] * 1000) + '_' + Math.round(agg.closest[1] * 1000);
+            let acc = accByKey.get(key);
+            if (!acc) {
+                acc = {
+                    name: c.name, kind: c.kind, group: c.group, weight: c.weight, base: c.base,
+                    energy: 0, energyUnblocked: 0, distMin: Infinity, closest: null,
+                    ways: [], segs: []
+                };
+                accByKey.set(key, acc);
+            }
+            acc.energy += c.weight * agg.energy;
+            acc.energyUnblocked += c.weight * agg.energyUnblocked;
+            acc.ways.push(c.geom);
+            if (agg.segs.length) acc.segs.push(...agg.segs);
+            if (agg.distMin < acc.distMin) { acc.distMin = agg.distMin; acc.closest = agg.closest; }
+        }
+
+        // Przelicz zagregowane drogi na źródła
+        const raw = [];
+        for (const acc of accByKey.values()) {
+            const energy = acc.energy;
             const level = 10 * Math.log10(energy + 1e-9);
             // Tłumienie budynkowe: energochłonne (ważone energią), ograniczone do 12 dB,
             // by droga nigdy nie wyszła jako 100% "cicha" tylko przez zabudowę.
-            const barrierDb = agg.energyUnblocked > 0
-                ? Math.min(12, Math.max(0, 10 * Math.log10(agg.energyUnblocked / agg.energy))) : 0;
-            const screenFrac = agg.energyUnblocked > 0
-                ? Math.min(0.95, Math.max(0, 1 - agg.energy / agg.energyUnblocked)) : 0;
+            const barrierDb = acc.energyUnblocked > 0
+                ? Math.min(12, Math.max(0, 10 * Math.log10(acc.energyUnblocked / acc.energy))) : 0;
+            const screenFrac = acc.energyUnblocked > 0
+                ? Math.min(0.95, Math.max(0, 1 - acc.energy / acc.energyUnblocked)) : 0;
             raw.push({
-                name: c.name, kind: c.kind, group: c.group, weight: c.weight, geom: c.geom, segs: agg.segs,
-                dist: agg.distMin, closest: agg.closest, base: c.base,
+                name: acc.name, kind: acc.kind, group: acc.group, weight: acc.weight,
+                geom: acc.ways, segs: acc.segs,
+                dist: acc.distMin, closest: acc.closest, base: acc.base,
                 level, energy, terrainFactor: 1, reduction: 0, rise: null,
                 buildingFactor: Math.pow(10, -barrierDb / 10), screenFrac, barrierDb
             });
         }
-
-        // Dedublikacja: jedna fizyczna droga (nazwa+typ) = jeden wpis,
-        // zachowujemy wpis o największej energii.
-        const byKey = new Map();
-        for (const s of raw) {
-            const key = s.name
-                ? s.group + '|' + s.name
-                : s.group + '|__' + Math.round(s.closest[0] * 1000) + '_' + Math.round(s.closest[1] * 1000);
-            const ex = byKey.get(key);
-            if (!ex || s.energy > ex.energy) byKey.set(key, s);
-        }
-        const sources = [...byKey.values()];
+        const sources = raw;
 
         // --- Ukształtowanie terenu (wał) ---
         let terrainNote = 'Ukształtowanie terenu nie zostało uwzględnione.';
@@ -915,10 +930,14 @@
             for (const s of drawList) {
                 const key = s.group + '|' + s.name;
                 const baseCol = s.screenFrac > 0.4 ? '#1e8449' : s.screenFrac > 0.15 ? '#e67e22' : '#c0392b';
-                const main = L.polyline(s.geom, { color: baseCol, weight: 2, opacity: 0.6 })
-                    .bindTooltip(`${s.name}: przesłonięte budynkami ${(s.screenFrac * 100).toFixed(0)}%`)
-                    .addTo(coneLayer);
-                coneByKey[key] = main;
+                const grp = L.featureGroup().addTo(coneLayer);
+                // cienka linia przebiegu każdego way-a (tooltips + orientacja)
+                const ways = Array.isArray(s.geom[0]) && Array.isArray(s.geom[0][0]) ? s.geom : [s.geom];
+                ways.forEach((w, wi) => {
+                    const pl = L.polyline(w, { color: baseCol, weight: 2, opacity: 0.5 });
+                    if (wi === 0) pl.bindTooltip(`${s.name}: przesłonięte budynkami ${(s.screenFrac * 100).toFixed(0)}%`);
+                    pl.addTo(grp);
+                });
                 // gradient widoczności wzdłuż całej drogi (tylko bliskie odcinki)
                 if (s.dist <= 1500 && s.segs) {
                     const step = Math.max(1, Math.ceil(s.segs.length / 400));
@@ -926,9 +945,10 @@
                         const sg = s.segs[i];
                         if (sg.d > 1500) continue;
                         const c = sg.vis > 0.66 ? '#1e8449' : sg.vis > 0.33 ? '#e67e22' : '#c0392b';
-                        L.polyline([sg.a, sg.b], { color: c, weight: 3, opacity: 0.55 }).addTo(coneLayer);
+                        L.polyline([sg.a, sg.b], { color: c, weight: 3, opacity: 0.55 }).addTo(grp);
                     }
                 }
+                coneByKey[key] = grp;
             }
             coneLayer.addTo(map);
         } else {
@@ -1069,10 +1089,10 @@
         if (!poly) return;
         map.fitBounds(poly.getBounds(), { maxZoom: 17, padding: [40, 40] });
         poly.bringToFront();
-        poly.setStyle({ weight: 3, fillOpacity: 0.45 });
-        poly.openTooltip();
+        poly.setStyle({ weight: 3, opacity: 0.9 });
+        poly.eachLayer(l => { if (l.getTooltip && l.getTooltip()) l.openTooltip(); });
         clearTimeout(poly._t);
-        poly._t = setTimeout(() => poly.setStyle({ weight: 1, fillOpacity: 0.18 }), 2500);
+        poly._t = setTimeout(() => poly.setStyle({ weight: 2, opacity: 0.55 }), 2500);
     }
 
     document.querySelectorAll('input[type=range]').forEach(r => {
