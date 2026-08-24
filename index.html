@@ -94,7 +94,7 @@
 
     <div id="sidebar">
         <h1>🌿 W poszukiwaniu ciszy</h1>
-        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24c]</span></p>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24d]</span></p>
 
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
@@ -258,8 +258,25 @@
         return null;
     }
 
-    // Prosta pamięć podręczna przeglądarki (klucz: zaokrąglone współrzędne + zasięg)
+    // Pamięć podręczna przeglądarki – TRWAŁA (localStorage), by wracając do
+    // tej samej lokalizacji nie pobierać danych od nowa.
+    const LS_WAYS = 'cisza_ways_v1';
+    const LS_BUILD = 'cisza_build_v1';
+    const CACHE_CAP = 40;
     const _cache = new Map();
+    const _bCache = new Map();
+    (function loadCache() {
+        try { const w = JSON.parse(localStorage.getItem(LS_WAYS) || '{}'); for (const k in w) _cache.set(k, w[k]); } catch (e) {}
+        try { const b = JSON.parse(localStorage.getItem(LS_BUILD) || '{}'); for (const k in b) _bCache.set(k, b[k]); } catch (e) {}
+    })();
+    function persistCache(store, key) {
+        try {
+            const obj = {};
+            const keys = [...store.keys()].slice(-CACHE_CAP);
+            for (const k of keys) obj[k] = store.get(k);
+            localStorage.setItem(key, JSON.stringify(obj));
+        } catch (e) { /* brak miejsca – ignorujemy */ }
+    }
 
     // Opisowa ocena najbardziej uciążliwego źródła
     function buildAssessment(d, sources, st) {
@@ -355,7 +372,7 @@
 
     // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-    console.log('CISZA-APP v2026-08-24c loaded');
+    console.log('CISZA-APP v2026-08-24d loaded');
 
     async function opQuery(q) {
         // 1) Bezpośrednio z przeglądarki (IP użytkownika; api.de/osm.ch odsyłają CORS *).
@@ -395,10 +412,15 @@
     }
 
     async function fetchBuildings(bbox) {
+        const key = bbox.s + ',' + bbox.w + ',' + bbox.n + ',' + bbox.e;
+        if (_bCache.has(key)) return _bCache.get(key);
         const { s, w, n, e } = bbox;
         const q = `[out:json][timeout:25];(way["building"](${s},${w},${n},${e}););out geom;`;
-        try { const json = await opQuery(q); return (json && json.elements) || []; }
-        catch (e) { return []; }
+        let els = [];
+        try { const json = await opQuery(q); els = (json && json.elements) || []; } catch (e) { els = []; }
+        _bCache.set(key, els);
+        persistCache(_bCache, LS_BUILD);
+        return els;
     }
 
     // --- Geometria: odległość, przecięcie odcinków (ekran budynkowy) ---
@@ -424,22 +446,24 @@
     // Jaki % długości źródła liniowego jest osłonięty budynkami między nim a punktem.
     // Nieuosłonięte 75% i tak emituje ogromną energię (logarytm dźwięku), więc
     // uśredniony spadek dla całego obszaru jest niewielki (~1 dB na 25% osłonięcia).
-    async function buildingFactorFor(src, lat, lng) {
+    async function buildingFactorFor(src, lat, lng, polys) {
         try {
-            const pts = src.geom.concat([[lat, lng]]);
-            let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
-            for (const pt of pts) {
-                minLat = Math.min(minLat, pt[0]); maxLat = Math.max(maxLat, pt[0]);
-                minLon = Math.min(minLon, pt[1]); maxLon = Math.max(maxLon, pt[1]);
+            if (!polys) {
+                const pts = src.geom.concat([[lat, lng]]);
+                let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
+                for (const pt of pts) {
+                    minLat = Math.min(minLat, pt[0]); maxLat = Math.max(maxLat, pt[0]);
+                    minLon = Math.min(minLon, pt[1]); maxLon = Math.max(maxLon, pt[1]);
+                }
+                const dLatB = 100 / 111320, dLonB = 100 / (111320 * Math.cos(lat * Math.PI / 180));
+                const bbox = {
+                    s: (minLat - dLatB).toFixed(5), n: (maxLat + dLatB).toFixed(5),
+                    w: (minLon - dLonB).toFixed(5), e: (maxLon + dLonB).toFixed(5)
+                };
+                const els = await fetchBuildings(bbox);
+                polys = els.map(el => (el.geometry || []).map(nodeLatLon)
+                    .filter(g => g && isFinite(g[0]) && isFinite(g[1]))).filter(p => p.length >= 3);
             }
-            const dLatB = 100 / 111320, dLonB = 100 / (111320 * Math.cos(lat * Math.PI / 180));
-            const bbox = {
-                s: (minLat - dLatB).toFixed(5), n: (maxLat + dLatB).toFixed(5),
-                w: (minLon - dLonB).toFixed(5), e: (maxLon + dLonB).toFixed(5)
-            };
-            const els = await fetchBuildings(bbox);
-            const polys = els.map(el => (el.geometry || []).map(nodeLatLon)
-                .filter(g => g && isFinite(g[0]) && isFinite(g[1]))).filter(p => p.length >= 3);
             if (!polys.length) return 1;
 
             const samples = src.geom.filter(rp => distMeters(rp, [lat, lng], lat, lng) <= 1500);
@@ -524,11 +548,14 @@
 
         const st = readSettings();
         const cacheKey = lat.toFixed(3) + '|' + lng.toFixed(3) + '|' + Math.max(st.radius, 2000);
-        let ways = _cache.has(cacheKey) ? _cache.get(cacheKey) : null;
+        const fromCache = _cache.has(cacheKey);
+        if (fromCache) startLoader('1/3 Ładuję z pamięci podręcznej…');
+        else startLoader('1/3 Pobieram sieć dróg i kolei…');
+        let ways = fromCache ? _cache.get(cacheKey) : null;
         if (!ways) {
             try {
                 ways = await fetchWays(lat, lng, Math.max(st.radius, 2000));
-                if (ways.length) _cache.set(cacheKey, ways); // nie cachujemy pustych!
+                if (ways.length) { _cache.set(cacheKey, ways); persistCache(_cache, LS_WAYS); } // nie cachujemy pustych!
             } catch (e) {
                 stopLoader();
                 alert('Nie udało się pobrać danych z Overpass: ' + e.message +
@@ -642,11 +669,30 @@
             }
 
             // --- Osłona budynkami (ekran akustyczny dla źródeł liniowych) ---
+            // Jedno wspólne zapytanie o budynki dla wszystkich kandydatów (szybciej).
             const buildCand = sources
                 .sort((a, b) => b.energy - a.energy)
                 .slice(0, 2); // tylko najważniejsze, by nie obciążać Overpass
+            let sharedPolys = [];
+            if (buildCand.length) {
+                let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
+                const pts = [[lat, lng]];
+                for (const s of buildCand) for (const g of s.geom) pts.push(g);
+                for (const pt of pts) {
+                    minLat = Math.min(minLat, pt[0]); maxLat = Math.max(maxLat, pt[0]);
+                    minLon = Math.min(minLon, pt[1]); maxLon = Math.max(maxLon, pt[1]);
+                }
+                const dLatB = 200 / 111320, dLonB = 200 / (111320 * Math.cos(lat * Math.PI / 180));
+                const bbox = {
+                    s: (minLat - dLatB).toFixed(5), n: (maxLat + dLatB).toFixed(5),
+                    w: (minLon - dLonB).toFixed(5), e: (maxLon + dLonB).toFixed(5)
+                };
+                const els = await fetchBuildings(bbox);
+                sharedPolys = els.map(el => (el.geometry || []).map(nodeLatLon)
+                    .filter(g => g && isFinite(g[0]) && isFinite(g[1]))).filter(p => p.length >= 3);
+            }
             for (const s of buildCand) {
-                s.buildingFactor = await buildingFactorFor(s, lat, lng);
+                s.buildingFactor = await buildingFactorFor(s, lat, lng, sharedPolys);
             }
         }
 
