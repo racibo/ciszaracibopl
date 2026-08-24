@@ -1,0 +1,15 @@
+{
+  "generated": "2026-08-24T18:00:19.026Z",
+  "originLat": 54.3,
+  "originLon": 18.4,
+  "cell": 0.02,
+  "radius": 2000,
+  "bbox": {
+    "latMin": 54.3,
+    "latMax": 54.62,
+    "lonMin": 18.38,
+    "lonMax": 18.82
+  },
+  "tiles": 0,
+  "endpoint": "https://overpass-api.de/api/interpreter"
+}
