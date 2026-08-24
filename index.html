@@ -94,7 +94,7 @@
 
     <div id="sidebar">
         <h1>🌿 W poszukiwaniu ciszy</h1>
-        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę.</p>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24b]</span></p>
 
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
@@ -355,21 +355,23 @@
 
     // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+    console.log('CISZA-APP v2026-08-24b loaded');
 
     async function opQuery(q) {
         // 1) Bezpośrednio z przeglądarki (IP użytkownika; api.de/osm.ch odsyłają CORS *).
-        let lastErr = null;
+        const errs = [];
         for (const ep of DIRECT_OVERPASS) {
             for (let a = 0; a < 2; a++) {
                 try {
                     const res = await fetch(ep, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                        body: 'data=' + encQ(q)
+                        body: 'data=' + encQ(q),
+                        signal: AbortSignal.timeout(25000)
                     });
-                    if (!res.ok) { lastErr = 'HTTP ' + res.status; continue; }
+                    if (!res.ok) { errs.push(ep + ' HTTP ' + res.status); continue; }
                     return await res.json();
-                } catch (e) { lastErr = e.message; }
+                } catch (e) { errs.push(ep + ': ' + e.message); }
             }
         }
         // 2) Rezerwa: funkcja Netlify (gdy bezpośrednio zablokowane)
@@ -379,8 +381,8 @@
                 headers: { 'Content-Type': 'application/json' }
             });
             if (r.ok) return await r.json();
-        } catch (e) { /* fallback */ }
-        throw new Error(lastErr || 'brak odpowiedzi Overpass');
+        } catch (e) { errs.push('netlify: ' + e.message); }
+        throw new Error('Overpass niedostępny: ' + errs.join(' | '));
     }
 
     async function fetchWays(lat, lon, radius) {
