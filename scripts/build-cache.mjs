@@ -44,17 +44,22 @@ function cellQuery(lat, lon) {
 }
 
 async function overpass(q, attempt = 0) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 25000); // twardy timeout zapytania
   try {
     const res = await fetch(OVERPASS, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: 'data=' + encodeURIComponent(q)
+      body: 'data=' + encodeURIComponent(q),
+      signal: ctrl.signal
     });
+    clearTimeout(to);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return await res.json();
   } catch (e) {
+    clearTimeout(to);
     if (attempt < 4) {
-      await new Promise(r => setTimeout(r, 3000 * (attempt + 1)));
+      await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
       return overpass(q, attempt + 1);
     }
     throw e;
@@ -81,9 +86,16 @@ async function main() {
   const lonCells = [];
   for (let lon = BBOX.lonMin; lon <= BBOX.lonMax + 1e-9; lon += STATIC_CELL) lonCells.push(lon);
 
+  const cells = [];
+  for (const lat of latCells)
+    for (const lon of lonCells)
+      cells.push([lat, lon]);
+
   let count = 0;
-  for (const lat of latCells) {
-    for (const lon of lonCells) {
+  const CONCURRENCY = 4; // równoległe komórki (Overpass toleruje kilka wątków)
+  async function worker() {
+    while (cells.length) {
+      const [lat, lon] = cells.pop();
       const gx = Math.round((lon - STATIC_ORIGIN_LON) / STATIC_CELL);
       const gy = Math.round((lat - STATIC_ORIGIN_LAT) / STATIC_CELL);
       const file = join(TILES_DIR, `${gx}_${gy}.json`);
@@ -96,9 +108,10 @@ async function main() {
       } catch (e) {
         console.error(`FAIL ${gx}_${gy}: ${e.message}`);
       }
-      await new Promise(r => setTimeout(r, 1500)); // grzeczność wobec Overpassa
     }
   }
+  await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+
   const manifest = {
     generated: new Date().toISOString(),
     originLat: STATIC_ORIGIN_LAT, originLon: STATIC_ORIGIN_LON,
