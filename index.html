@@ -102,7 +102,7 @@
 
     <div id="sidebar">
         <h1>🌿 W poszukiwaniu ciszy</h1>
-        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24q]</span></p>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24r]</span></p>
 
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
@@ -669,7 +669,7 @@
 
     // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-    console.log('CISZA-APP v2026-08-24q loaded');
+    console.log('CISZA-APP v2026-08-24r loaded');
 
     async function opQuery(q) {
         const RACE_TIMEOUT = 10000;
@@ -735,19 +735,42 @@
     const STATIC_ORIGIN_LAT = 54.30, STATIC_ORIGIN_LON = 18.40, STATIC_CELL = 0.02;
     const STATIC_TILE_BASE = 'tiles/';
     const _staticTiles = new Map();
+    let _manifest = undefined; // undefined = nieznany, null = brak / obszar niepokryty
+    async function loadManifest() {
+        if (_manifest !== undefined) return _manifest;
+        try {
+            const ctrl = new AbortController();
+            const to = setTimeout(() => ctrl.abort(), 4000);
+            const r = await fetch(STATIC_TILE_BASE + 'manifest.json', { signal: ctrl.signal });
+            clearTimeout(to);
+            _manifest = r.ok ? await r.json() : null;
+        } catch (e) { _manifest = null; }
+        return _manifest;
+    }
     async function loadStaticTile(lat, lon) {
         const gx = Math.round((lon - STATIC_ORIGIN_LON) / STATIC_CELL);
         const gy = Math.round((lat - STATIC_ORIGIN_LAT) / STATIC_CELL);
         const key = gx + '_' + gy;
         if (_staticTiles.has(key)) return _staticTiles.get(key);
         let tile = null;
-        try {
-            const ctrl = new AbortController();
-            const to = setTimeout(() => ctrl.abort(), 4000);
-            const res = await fetch(STATIC_TILE_BASE + key + '.json', { signal: ctrl.signal });
-            clearTimeout(to);
-            if (res.ok) tile = await res.json();
-        } catch (e) { tile = null; }
+        const man = await loadManifest();
+        // Bez manifestu lub poza pokrytym obszarem → nie próbujemy (brak 404 w konsoli)
+        if (man && man.originLat != null) {
+            const ox = man.originLon != null ? man.originLon : STATIC_ORIGIN_LON;
+            const oc = man.cell != null ? man.cell : STATIC_CELL;
+            const mx = Math.round((lon - ox) / oc), my = Math.round((lat - man.originLat) / oc);
+            const bb = man.bbox;
+            const covered = bb && lon >= bb.lonMin && lon <= bb.lonMax && lat >= bb.latMin && lat <= bb.latMax;
+            if (covered) {
+                try {
+                    const ctrl = new AbortController();
+                    const to = setTimeout(() => ctrl.abort(), 4000);
+                    const res = await fetch(STATIC_TILE_BASE + mx + '_' + my + '.json', { signal: ctrl.signal });
+                    clearTimeout(to);
+                    if (res.ok) tile = await res.json();
+                } catch (e) { tile = null; }
+            }
+        }
         _staticTiles.set(key, tile); // null = brak kafelka → fallback do live
         return tile;
     }
