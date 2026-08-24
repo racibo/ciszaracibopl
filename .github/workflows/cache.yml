@@ -1,0 +1,35 @@
+name: Build static noise cache
+
+on:
+  schedule:
+    # Raz w miesiącu (1. dzień, 03:17 UTC) – darmowy cron GitHub Actions.
+    - cron: '17 3 1 * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Generate static tiles
+        run: node scripts/build-cache.mjs
+
+      - name: Commit tiles
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'cache: odśwież statyczne kafelki hałasu'
+          file_pattern: 'tiles/*'
+          commit_user_name: 'cache-bot'
+          commit_user_email: 'cache-bot@users.noreply.github.com'

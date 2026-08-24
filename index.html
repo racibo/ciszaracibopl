@@ -83,6 +83,14 @@
         .err { color: #c0392b; font-size: 0.85em; }
         .small { font-size: 0.72em; color: #95a5a6; margin-top: 10px; line-height: 1.4; }
 
+        #roseWrap { display: none; margin-top: 12px; text-align: center; }
+        #rose { display: inline-block; }
+        #rose svg { max-width: 100%; height: auto; }
+        .rose-title { font-weight: 600; font-size: 0.9em; margin: 4px 0; }
+        .dir-legend { font-size: 0.7em; color: #95a5a6; margin: 4px 0 8px; line-height: 1.3; }
+        .thread-toggle { font-size: 0.82em; margin: 6px 0 2px; }
+        .pill.periodic { background: #fef9e7; color: #b7950b; }
+
         @media (max-width: 768px) {
             body { flex-direction: column; }
             #sidebar { width: 100%; height: 55vh; }
@@ -94,7 +102,7 @@
 
     <div id="sidebar">
         <h1>🌿 W poszukiwaniu ciszy</h1>
-        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24p]</span></p>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24q]</span></p>
 
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
@@ -118,6 +126,11 @@
             <div class="set-row"><label>Wysokość wału (m)</label>
                 <input type="range" id="barrier" min="10" max="50" step="5" value="20">
                 <span class="val" id="barrier_v">20</span></div>
+
+            <div class="thread-toggle">
+                <input type="checkbox" id="showThreads" checked>
+                <label for="showThreads">Pokaż nitki źródeł (pajęczyna) na mapie</label>
+            </div>
         </details>
 
         <div id="loader">Pobieram sieć dróg i kolei oraz profil terenu…</div>
@@ -132,6 +145,12 @@
             <div id="assessment" style="font-size:0.85em;line-height:1.5;margin:10px 0;padding:10px;background:#f0fbf8;border-radius:8px;"></div>
 
             <div id="terrainNote"></div>
+
+            <div id="roseWrap">
+                <div class="rose-title">🧭 Głośność wg kierunków (pajęczyna)</div>
+                <div id="rose"></div>
+                <div class="dir-legend">Promień każdego płatka = poziom hałasu z tego kierunku.<br>Zielony = cicho, czerwony = głośno. Nitki na mapie pokazują konkretne źródła.</div>
+            </div>
 
             <table id="srcTable" style="margin-top:12px;">
                 <thead><tr><th>Szlak</th><th>Hałas<br> bazowy</th><th>Redukcja:<br>odległość</th><th>Redukcja:<br>budynki (stożek)</th><th>Redukcja:<br>teren (wał)</th><th>Końcowy<br>odczuwalny</th></tr></thead>
@@ -178,11 +197,15 @@
     const GROUP_LABEL = {
         szybki:'Autostrada / Droga ekspresowa', krajowa:'Droga krajowa',
         wojew:'Droga wojewódzka', lokalna:'Droga lokalna',
-        kolej:'Kolej (główna)', miejska:'Kolej miejska / tramwaj'
+        kolej:'Kolej (główna)', miejska:'Kolej miejska / tramwaj',
+        school:'Szkoła', stadium:'Stadion', sports:'Hala sportowa',
+        pitch:'Boisko / plac zabaw', shop:'Sklep / usługa', gastro:'Restauracja / kawiarnia'
     };
     const GROUP_TYPE = {
         szybki:'Droga', krajowa:'Droga', wojew:'Droga', lokalna:'Droga',
-        kolej:'Kolej', miejska:'Kolej'
+        kolej:'Kolej', miejska:'Kolej',
+        school:'Punkt', stadium:'Punkt', sports:'Punkt', pitch:'Punkt',
+        shop:'Punkt', gastro:'Punkt'
     };
     const AMBIENT_DB = 30.0, REFERENCE_DB = 80.0;
 
@@ -210,6 +233,88 @@
     const SEG_STEP = 20;          // długość segmentu drogi [m]
     const BUILDING_ATT = 12;      // maks. tłumienie [dB] za przeszkodą (budynkiem)
     const BUILDING_RADIUS = 400;  // promień pobierania budynków wokół punktu [m]
+
+    // ----------------- Punktowe źródła hałasu (OSM) -----------------
+    // Szkoły, boiska, gastronomia, usługi. Model punktowy (6 dB na każde
+    // podwojenie odległości). Hałas okresowy (przerwy, mecze) oznaczamy osobno.
+    const POI_BASE = {
+        school: 68, sports: 64, stadium: 70, pitch: 62, shop: 55, gastro: 60
+    };
+    const POI_LABEL = {
+        school: 'Szkoła', sports: 'Hala sportowa', stadium: 'Stadion',
+        pitch: 'Boisko / plac zabaw', shop: 'Sklep / usługa', gastro: 'Restauracja / kawiarnia'
+    };
+    // Grupy traktowane jako hałas okresowy (przerwy, mecze, weekendy)
+    const PERIODIC_POI = new Set(['school', 'sports', 'stadium', 'pitch']);
+    const POI_CUTOFF = 1200;      // promień uwzględniania źródła punktowego [m]
+
+    // Azymut (stopnie, 0=N, 90=E) od punktu a do b
+    function bearingDeg(a, b) {
+        const r = Math.PI / 180;
+        const lat1 = a[0] * r, lat2 = b[0] * r, dLon = (b[1] - a[1]) * r;
+        const y = Math.sin(dLon) * Math.cos(lat2);
+        const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+        let brg = Math.atan2(y, x) / r;
+        return (brg + 360) % 360;
+    }
+    function compass(deg) {
+        const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+        return dirs[Math.round(deg / 22.5) % 16];
+    }
+
+    // Mapowanie tagów OSM na grupę POI (lub null)
+    function classifyPOI(tags) {
+        if (!tags) return null;
+        if (tags.amenity === 'school' || tags.amenity === 'university' || tags.amenity === 'kindergarten') return 'school';
+        if (tags.leisure === 'stadium') return 'stadium';
+        if (tags.leisure === 'sports_centre') return 'sports';
+        if (tags.leisure === 'pitch' || tags.leisure === 'playground') return 'pitch';
+        if (tags.amenity && /^(restaurant|cafe|bar|pub|fast_food)$/.test(tags.amenity)) return 'gastro';
+        if (tags.shop || tags.office) return 'shop';
+        return null;
+    }
+
+    function buildOverpassPOI(lat, lon, radius) {
+        const dLat = radius / 111320;
+        const dLon = radius / (111320 * Math.cos(lat * Math.PI / 180));
+        const s = (lat - dLat).toFixed(6), n = (lat + dLat).toFixed(6);
+        const w = (lon - dLon).toFixed(6), e = (lon + dLon).toFixed(6);
+        return `[out:json][timeout:25];(` +
+            `node["amenity"~"^(school|university|kindergarten)$"](${s},${w},${n},${e});` +
+            `node["leisure"~"^(stadium|sports_centre|pitch|playground)$"](${s},${w},${n},${e});` +
+            `node["amenity"~"^(restaurant|cafe|bar|pub|fast_food)$"](${s},${w},${n},${e});` +
+            `node["shop"](${s},${w},${n},${e});` +
+            `node["office"](${s},${w},${n},${e});` +
+        `);out body;`;
+    }
+
+    // Agregacja źródła punktowego: rozchód 20*log10(d), osłona budynkowa przez
+    // ułamek zasłonięcia promienia (visibilityFraction).
+    function aggregatePoint(p, pt, base, polys, att, radius) {
+        const d = haversine(p, pt);
+        if (d > radius) return { energy: 0, energyUnblocked: 0, distMin: d, closest: pt, segs: [] };
+        const free = base - 20 * Math.log10(Math.max(d, 1)) - 11;
+        const vis = visibilityFraction(p, p, pt, polys, 5);
+        const att_i = (1 - vis) * att;
+        const energy = Math.pow(10, (free - att_i) / 10);
+        const energyUnblocked = Math.pow(10, free / 10);
+        return { energy, energyUnblocked, distMin: d, closest: pt, segs: [{ a: pt, b: pt, mid: pt, d, vis }] };
+    }
+
+    // Cache punktowych źródeł (trwały, niezależny od dróg)
+    const LS_POI = 'cisza_poi_v1';
+    const _poiCache = new Map();
+    (function loadPOICache() {
+        try { const o = JSON.parse(localStorage.getItem(LS_POI) || '{}'); for (const k in o) _poiCache.set(k, o[k]); } catch (e) {}
+    })();
+    async function fetchPOI(lat, lon, radius) {
+        const tile = await loadStaticTile(lat, lon);
+        if (tile && Array.isArray(tile.poi) && tile.poi.length) return tile.poi;
+        const q = buildOverpassPOI(lat, lon, radius);
+        const json = await opQuery(q);
+        if (json && json.remark && (!json.elements || !json.elements.length)) return [];
+        return (json && json.elements) || [];
+    }
 
     // Overpass zwraca geometry jako tablicę obiektów {lat, lon}
     function nodeLatLon(n) {
@@ -564,7 +669,7 @@
 
     // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-    console.log('CISZA-APP v2026-08-24p loaded');
+    console.log('CISZA-APP v2026-08-24q loaded');
 
     async function opQuery(q) {
         const RACE_TIMEOUT = 10000;
@@ -623,7 +728,33 @@
         throw lastErr || new Error('Overpass niedostępny po 3 próbach');
     }
 
+    // ---------------- Statyczny cache w kafelkach (GitHub Actions) ----------------
+    // Jeśli istnieją wstępnie wygenerowane kafelki JSON (tiles/<gx>_<gy>.json),
+    // przeglądarka używa ich zamiast live Overpass. Kafelki pokrywają obszar
+    // Trójmiasta i są odświeżane raz w miesiącu przez workflow na GitHubie.
+    const STATIC_ORIGIN_LAT = 54.30, STATIC_ORIGIN_LON = 18.40, STATIC_CELL = 0.02;
+    const STATIC_TILE_BASE = 'tiles/';
+    const _staticTiles = new Map();
+    async function loadStaticTile(lat, lon) {
+        const gx = Math.round((lon - STATIC_ORIGIN_LON) / STATIC_CELL);
+        const gy = Math.round((lat - STATIC_ORIGIN_LAT) / STATIC_CELL);
+        const key = gx + '_' + gy;
+        if (_staticTiles.has(key)) return _staticTiles.get(key);
+        let tile = null;
+        try {
+            const ctrl = new AbortController();
+            const to = setTimeout(() => ctrl.abort(), 4000);
+            const res = await fetch(STATIC_TILE_BASE + key + '.json', { signal: ctrl.signal });
+            clearTimeout(to);
+            if (res.ok) tile = await res.json();
+        } catch (e) { tile = null; }
+        _staticTiles.set(key, tile); // null = brak kafelka → fallback do live
+        return tile;
+    }
+
     async function fetchWays(lat, lon, radius) {
+        const tile = await loadStaticTile(lat, lon);
+        if (tile && Array.isArray(tile.ways) && tile.ways.length) return tile.ways;
         const q = buildOverpass(lat, lon, radius);
         const json = await opQuery(q);
         if (json && json.remark && (!json.elements || !json.elements.length)) {
@@ -638,6 +769,15 @@
         if (_bCache.has(key) && _bCache.get(key).length) return _bCache.get(key);
         buildingFetchError = '';
         const { s, w, n, e } = bbox;
+        // Statyczny kafelek: zwróć zbuforowaną zabudowę, jeśli kafelek obejmuje punkt
+        const clat = (parseFloat(s) + parseFloat(n)) / 2;
+        const clon = (parseFloat(w) + parseFloat(e)) / 2;
+        const tile = await loadStaticTile(clat, clon);
+        if (tile && Array.isArray(tile.buildings) && tile.buildings.length) {
+            _bCache.set(key, tile.buildings);
+            persistCache(_bCache, LS_BUILD);
+            return tile.buildings;
+        }
         const q = `[out:json][timeout:25];(way["building"](${s},${w},${n},${e}););out geom;`;
         let els = [];
         try { const json = await opQuery(q); els = (json && json.elements) || []; }
@@ -852,6 +992,45 @@
             if (agg.distMin < acc.distMin) { acc.distMin = agg.distMin; acc.closest = agg.closest; }
         }
 
+        // --- Pobierz punktowe źródła (szkoły, boiska, gastronomia, usługi) ---
+        stepLoader('2c/3 Pobieram punktowe źródła (szkoły, boiska, usługi)…');
+        const poiKey = cacheKey + '|poi';
+        let poi = _poiCache.has(poiKey) ? _poiCache.get(poiKey) : null;
+        if (!poi) {
+            try {
+                poi = await fetchPOI(lat, lng, ANALYSIS_R);
+                if (poi.length) { _poiCache.set(poiKey, poi); persistCache(_poiCache, LS_POI); }
+            } catch (e) { poi = []; }
+        }
+        const poiCands = [];
+        for (const el of poi) {
+            const ll = (el && typeof el.lat === 'number') ? [el.lat, el.lon] : null;
+            if (!ll) continue;
+            const grp = classifyPOI(el.tags || {});
+            if (!grp) continue;
+            poiCands.push({ name: (el.tags && el.tags.name) || POI_LABEL[grp], group: grp, base: POI_BASE[grp], ll });
+        }
+        for (const c of poiCands) {
+            const agg = aggregatePoint(p, c.ll, c.base, polys, BUILDING_ATT, ANALYSIS_R);
+            if (agg.distMin > POI_CUTOFF) continue;
+            if (agg.energy <= 1e-12) continue;
+            const key = 'poi|' + c.group + '|' + c.name + '|' + Math.round(c.ll[0] * 1000) + '_' + Math.round(c.ll[1] * 1000);
+            let acc = accByKey.get(key);
+            if (!acc) {
+                acc = {
+                    name: c.name, kind: 'poi', group: c.group, weight: 1, base: c.base,
+                    energy: 0, energyUnblocked: 0, distMin: Infinity, closest: null,
+                    ways: [], segs: [], periodic: PERIODIC_POI.has(c.group)
+                };
+                accByKey.set(key, acc);
+            }
+            acc.energy += agg.energy;
+            acc.energyUnblocked += agg.energyUnblocked;
+            acc.ways.push([c.ll]);
+            if (agg.segs.length) acc.segs.push(...agg.segs);
+            if (agg.distMin < acc.distMin) { acc.distMin = agg.distMin; acc.closest = agg.closest; }
+        }
+
         // Przelicz zagregowane drogi na źródła
         const raw = [];
         for (const acc of accByKey.values()) {
@@ -868,7 +1047,8 @@
                 geom: acc.ways, segs: acc.segs,
                 dist: acc.distMin, closest: acc.closest, base: acc.base,
                 level, energy, terrainFactor: 1, reduction: 0, rise: null,
-                buildingFactor: Math.pow(10, -barrierDb / 10), screenFrac, barrierDb
+                buildingFactor: Math.pow(10, -barrierDb / 10), screenFrac, barrierDb,
+                periodic: !!acc.periodic
             });
         }
         const sources = raw;
@@ -919,6 +1099,29 @@
             }
         }
 
+        // --- Podział na kierunki (36 sektorów co 10°) dla pajęczyny i róży ---
+        // (po uwzględnieniu osłony terenu, by róża odzwierciedlała końcowy hałas)
+        const SECTORS = 36, SEC = 360 / SECTORS;
+        const sectors = Array.from({ length: SECTORS }, (_, i) => ({
+            idx: i, dir: i * SEC + SEC / 2, energy: 0, top: null, topEff: -1
+        }));
+        for (const s of sources) {
+            if (!s.closest) continue;
+            const brg = bearingDeg(p, s.closest);
+            const si = Math.floor(brg / SEC) % SECTORS;
+            const sec = sectors[si];
+            const eff = s.energy * s.terrainFactor;
+            sec.energy += eff;
+            if (eff > sec.topEff) { sec.top = s; sec.topEff = eff; }
+        }
+        const sectorLevels = sectors.map(sec => {
+            const tot = Math.pow(10, AMBIENT_DB / 10) + sec.energy;
+            return 10 * Math.log10(tot);
+        });
+        let domSecIdx = 0;
+        for (let i = 1; i < SECTORS; i++) if (sectorLevels[i] > sectorLevels[domSecIdx]) domSecIdx = i;
+        const dominantDir = sectors[domSecIdx].dir;
+
         // --- Warstwa akustyczna: cała droga jako ciągła linia, kolor = widoczność ---
         // Każdy 20-metrowy odcinek malujemy osobno: zielony = widoczny (słychać),
         // czerwony = przesłonięty budynkami. To całościowa integracja źródła liniowego.
@@ -968,6 +1171,9 @@
                 if (eff > 0.05 * scoreEnergy) scoreEnergy += 0.25 * eff;
             }
             assessment = buildAssessment(dominant, sources, st);
+            const domSec = sectors[domSecIdx];
+            assessment += ` Najgłośniej z kierunku ${compass(domSec.dir)} (${Math.round(domSec.dir)}°)` +
+                (domSec.top ? ` – ${domSec.top.name}.` : '.');
         } else {
             assessment = 'W promieniu analizy nie wykryto istotnych dróg ani linii kolejowych – miejsce zapowiada się bardzo cicho.';
         }
@@ -1009,13 +1215,78 @@
             final_pct: s.finalPct,
             screen_pct: s.screenFrac != null ? Math.round(s.screenFrac * 100) : null,
             burden: s.burden,
-            building_reduction_db: s.building_note || null
+            building_reduction_db: s.building_note || null,
+            periodic: !!s.periodic,
+            dir: s.closest ? Math.round(bearingDeg(p, s.closest)) : null
         }));
+
+        // --- Pajęczyna: nitki od punktu do każdego istotnego źródła (kolor = dB) ---
+        threadLayer.clearLayers();
+        if (document.getElementById('showThreads').checked) {
+            const tlist = sources
+                .filter(s => s.closest && isFinite(s.level) && s.dist <= ANALYSIS_R && s.level > 35)
+                .sort((a, b) => b.energy - a.energy)
+                .slice(0, 60);
+            for (const s of tlist) {
+                const col = levelColor(s.level);
+                const pl = L.polyline([[lat, lng], s.closest], { color: col, weight: 2, opacity: 0.7, dashArray: '4 4' });
+                const dirTxt = s.closest ? compass(bearingDeg([lat, lng], s.closest)) : '';
+                pl.bindTooltip(`${s.name} · ${Math.round(s.level)} dB · ${Math.round(s.dist)} m · kier. ${dirTxt}` +
+                    (s.periodic ? ' · 🌬️ okresowo' : ''));
+                pl.addTo(threadLayer);
+            }
+            threadLayer.addTo(map);
+        }
 
         render({
             score: Math.round(score), level_db: Math.round(levelDb * 10) / 10,
-            assessment, terrain_note: terrainNote + buildingNote, sources: top
+            assessment, terrain_note: terrainNote + buildingNote, sources: top,
+            sectors: sectorLevels, dominantDir
         });
+    }
+
+    // Kolor poziomu dB: 35 dB (cicho) -> zielony, 75 dB (głośno) -> czerwony
+    function levelColor(level) {
+        const t = Math.max(0, Math.min(1, (level - 35) / (75 - 35)));
+        const r = Math.round(39 + t * (192 - 39));
+        const g = Math.round(174 - t * (174 - 57));
+        const b = Math.round(96 - t * (96 - 43));
+        return `rgb(${r},${g},${b})`;
+    }
+
+    // Rysuje różę kierunkową (SVG): promień płatka = poziom hałasu z danego kierunku
+    function drawRose(levels, dominantDir) {
+        const el = document.getElementById('rose');
+        if (!levels || !levels.length) { el.innerHTML = ''; return; }
+        const N = levels.length, cx = 130, cy = 130, R0 = 16, maxR = 108;
+        const minL = 30, maxL = Math.max(90, Math.max(...levels));
+        const ang = (deg) => (deg - 90) * Math.PI / 180;
+        const pt = (deg, r) => [cx + r * Math.cos(ang(deg)), cy + r * Math.sin(ang(deg))];
+        let poly = '', spokes = '';
+        for (let i = 0; i < N; i++) {
+            const dir = i * (360 / N) + (360 / N) / 2;
+            const lv = levels[i];
+            const t = Math.max(0, Math.min(1, (lv - minL) / (maxL - minL)));
+            const r = R0 + t * (maxR - R0);
+            const [x, y] = pt(dir, r);
+            poly += (i === 0 ? 'M' : 'L') + x.toFixed(1) + ' ' + y.toFixed(1) + ' ';
+            const [x0, y0] = pt(dir, R0);
+            spokes += `<line x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="${levelColor(lv)}" stroke-width="3" stroke-linecap="round"/>`;
+        }
+        poly += 'Z';
+        const rings = [0.33, 0.66, 1].map(f =>
+            `<circle cx="${cx}" cy="${cy}" r="${(R0 + f * (maxR - R0)).toFixed(1)}" fill="none" stroke="#e0e0e0" stroke-width="1"/>`).join('');
+        const axes = ['N', 'E', 'S', 'W'].map((t, k) => {
+            const a = k * 90, [ax, ay] = pt(a, maxR + 10);
+            return `<text x="${ax.toFixed(1)}" y="${ay.toFixed(1)}" font-size="11" fill="#7f8c8d" text-anchor="middle" dominant-baseline="middle">${t}</text>`;
+        }).join('');
+        const [dx, dy] = pt(dominantDir, maxR + 10);
+        const domLabel = `<text x="${dx.toFixed(1)}" y="${dy.toFixed(1)}" font-size="10" fill="#c0392b" text-anchor="middle">${compass(dominantDir)}</text>`;
+        el.innerHTML = `<svg width="260" height="260" viewBox="0 0 260 260">` +
+            rings + axes + domLabel +
+            `<path d="${poly}" fill="rgba(231,76,60,0.12)" stroke="#c0392b" stroke-width="1"/>` +
+            spokes +
+            `<circle cx="${cx}" cy="${cy}" r="4" fill="#2c3e50"/></svg>`;
     }
 
     function render(d) {
@@ -1035,6 +1306,15 @@
         document.getElementById('assessment').innerText = d.assessment || '';
         document.getElementById('terrainNote').innerText = d.terrain_note || '';
 
+        // Róża kierunkowa (pajęczyna)
+        const roseWrap = document.getElementById('roseWrap');
+        if (d.sectors && d.sectors.length) {
+            roseWrap.style.display = 'block';
+            drawRose(d.sectors, d.dominantDir || 0);
+        } else {
+            roseWrap.style.display = 'none';
+        }
+
         const tb = document.querySelector('#srcTable tbody');
         tb.innerHTML = '';
         const redCell = (v) => v > 0
@@ -1047,10 +1327,12 @@
             const cone = s.screen_pct != null
                 ? `<span style="font-size:0.74em;color:#7f8c8d;">przesłonięte: ${s.screen_pct}%</span>`
                 : '';
+            const periodicBadge = s.periodic ? ` <span class="pill periodic">🌬️ okresowo</span>` : '';
+            const dirTxt = (s.dir != null) ? ` · kier. ${compass(s.dir)} (${s.dir}°)` : '';
             const budCell = redCell(s.red_bud) +
                 (s.building_reduction_db ? ` <span class="pill green">−${s.building_reduction_db} dB</span>` : '');
             tr.innerHTML =
-                `<td><b style="cursor:pointer;color:#21618c;text-decoration:underline;" onclick="focusCone('${s.key}')" title="Pokaż na mapie">${s.name}</b><br><span style="font-size:0.74em;color:#7f8c8d;">${s.type} · ${s.distance_m} m · ${cone}</span></td>` +
+                `<td><b style="cursor:pointer;color:#21618c;text-decoration:underline;" onclick="focusCone('${s.key}')" title="Pokaż na mapie">${s.name}</b>${periodicBadge}<br><span style="font-size:0.74em;color:#7f8c8d;">${s.type} · ${s.distance_m} m${dirTxt} · ${cone}</span></td>` +
                 `<td>${s.base_pct}%</td>` +
                 `<td>${redCell(s.red_dist)}</td>` +
                 `<td>${budCell}</td>` +
@@ -1080,6 +1362,9 @@
     // Warstwa stożków akustycznych (rysowana w analyze)
     const coneLayer = L.layerGroup().addTo(map);
     const coneByKey = {};
+    // Warstwa nitek (pajęczyna) + róża na mapie
+    const threadLayer = L.layerGroup().addTo(map);
+    const roseLayer = L.layerGroup().addTo(map);
     map.on('click', e => analyze(e.latlng.lat, e.latlng.lng));
 
     // Kliknięcie nazwy szlaku w tabeli -> przybliżenie jego stożka na mapie
