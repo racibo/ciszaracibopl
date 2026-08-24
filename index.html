@@ -94,7 +94,7 @@
 
     <div id="sidebar">
         <h1>🌿 W poszukiwaniu ciszy</h1>
-        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24g]</span></p>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24h]</span></p>
 
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
@@ -526,8 +526,8 @@
 
     // Endpointy bezpośrednie z włączonym CORS (rezerwa, gdy funkcja proxy nie działa)
     const DIRECT_OVERPASS = [
-        'https://overpass-api.de/api/interpreter',
         'https://overpass.osm.ch/api/interpreter',
+        'https://overpass-api.de/api/interpreter',
         'https://overpass.kumi.systems/api/interpreter',
         'https://overpass.private.coffee/api/interpreter',
         'https://overpass.openstreetmap.ru/api/interpreter'
@@ -535,34 +535,45 @@
 
     // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-    console.log('CISZA-APP v2026-08-24g loaded');
+    console.log('CISZA-APP v2026-08-24h loaded');
 
     async function opQuery(q) {
-        // 1) Bezpośrednio z przeglądarki (IP użytkownika; api.de/osm.ch odsyłają CORS *).
-        const errs = [];
-        for (const ep of DIRECT_OVERPASS) {
-            for (let a = 0; a < 2; a++) {
+        // Wyścig: wszystkie mirror-y Overpass równolegle, wygrywa pierwszy działający.
+        // Każde zapytanie ma limit 15s; po sukcesie przerywamy pozostałe (AbortController).
+        const controllers = [];
+        const mkJob = (ep) => {
+            const c = new AbortController();
+            controllers.push(c);
+            const timer = setTimeout(() => c.abort(), 15000);
+            return (async () => {
                 try {
                     const res = await fetch(ep, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                         body: 'data=' + encQ(q),
-                        signal: AbortSignal.timeout(25000)
+                        signal: c.signal
                     });
-                    if (!res.ok) { errs.push(ep + ' HTTP ' + res.status); continue; }
-                    return await res.json();
-                } catch (e) { errs.push(ep + ': ' + e.message); }
-            }
+                    if (!res.ok) throw new Error(ep + ' HTTP ' + res.status);
+                    const j = await res.json();
+                    controllers.forEach(x => x.abort());
+                    return j;
+                } finally { clearTimeout(timer); }
+            })().catch(e => { c.abort(); throw e; });
+        };
+        try {
+            return await Promise.any(DIRECT_OVERPASS.map(mkJob));
+        } catch (_) {
+            controllers.forEach(c => c.abort());
         }
-        // 2) Rezerwa: funkcja Netlify (gdy bezpośrednio zablokowane)
+        // Rezerwa: funkcja Netlify (serwerowo, bez CORS, też robi wyścig backendów)
         try {
             const r = await fetch('/.netlify/functions/overpass', {
                 method: 'POST', body: JSON.stringify({ q }),
                 headers: { 'Content-Type': 'application/json' }
             });
             if (r.ok) return await r.json();
-        } catch (e) { errs.push('netlify: ' + e.message); }
-        throw new Error('Overpass niedostępny: ' + errs.join(' | '));
+        } catch (e) { /* ignoruj */ }
+        throw new Error('Overpass niedostępny na wszystkich serwerach (przeciążony?). Spróbuj ponownie za chwilę.');
     }
 
     async function fetchWays(lat, lon, radius) {
