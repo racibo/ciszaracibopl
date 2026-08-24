@@ -94,7 +94,7 @@
 
     <div id="sidebar">
         <h1>🌿 W poszukiwaniu ciszy</h1>
-        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24m]</span></p>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24n]</span></p>
 
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
@@ -564,7 +564,7 @@
 
     // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-    console.log('CISZA-APP v2026-08-24m loaded');
+    console.log('CISZA-APP v2026-08-24n loaded');
 
     async function opQuery(q) {
         const RACE_TIMEOUT = 10000;
@@ -956,14 +956,15 @@
 
         // --- Wynik: bierzemy pod uwagę najbardziej uciążliwe źródło ---
         sources.sort((a, b) =>
-            (b.energy * b.terrainFactor * b.buildingFactor) -
-            (a.energy * a.terrainFactor * a.buildingFactor));
+            (b.energy * b.terrainFactor) - (a.energy * a.terrainFactor));
         const dominant = sources[0];
         let scoreEnergy = 0, assessment = '';
         if (dominant) {
-            scoreEnergy = dominant.energy * dominant.terrainFactor * dominant.buildingFactor;
+            // s.energy jest już po osłonie budynkowej (aggregateLine aplikuje att_i),
+            // więc NIE mnożymy przez buildingFactor (to byłoby podwójne liczenie).
+            scoreEnergy = dominant.energy * dominant.terrainFactor;
             for (let i = 1; i < sources.length; i++) {
-                const eff = sources[i].energy * sources[i].terrainFactor * sources[i].buildingFactor;
+                const eff = sources[i].energy * sources[i].terrainFactor;
                 if (eff > 0.05 * scoreEnergy) scoreEnergy += 0.25 * eff;
             }
             assessment = buildAssessment(dominant, sources, st);
@@ -974,21 +975,20 @@
         // Uciążliwość każdego źródła w skali 0-100 + rozbicie na czynniki (stożek)
         const clampPct = (x) => Math.max(0, Math.min(100, Math.round(x)));
         for (const s of sources) {
-            const eff = s.energy * s.terrainFactor * s.buildingFactor;
-            const lvl = 10 * Math.log10(eff + 1e-9);
-            s.burden = Math.max(0, Math.min(100, Math.round((lvl - AMBIENT_DB) / (REFERENCE_DB - AMBIENT_DB) * 100)));
-            if (s.buildingFactor < 1) {
-                s.building_note = Math.round(-10 * Math.log10(s.buildingFactor));
-            }
-            // Model procentowy (H_końc = H_baz * (1-T_odl) * (1-T_przeszkody))
+            // s.level to poziom JUŻ po osłonie budynkowej (aggregateLine). Poziom w polu
+            // swobodnym (tylko odległość) odzyskujemy dodając tłumienie budynkowe z powrotem.
+            const budDb = s.buildingFactor < 1 ? -10 * Math.log10(s.buildingFactor) : 0;
+            const freeLevel = s.level + budDb;
+            const effLevel = s.level + 10 * Math.log10(s.terrainFactor || 1);
+            s.burden = clampPct((effLevel - AMBIENT_DB) / (REFERENCE_DB - AMBIENT_DB) * 100);
+            if (budDb > 0) s.building_note = Math.round(budDb);
             const basePct = clampPct((s.base - AMBIENT_DB) / (REFERENCE_DB - AMBIENT_DB) * 100);
-            const distPct = clampPct((s.level - AMBIENT_DB) / (REFERENCE_DB - AMBIENT_DB) * 100);
-            const afterBud = s.level + 10 * Math.log10(s.buildingFactor || 1);
-            const afterBudPct = clampPct((afterBud - AMBIENT_DB) / (REFERENCE_DB - AMBIENT_DB) * 100);
+            const distPct = clampPct((freeLevel - AMBIENT_DB) / (REFERENCE_DB - AMBIENT_DB) * 100);
+            const afterBudPct = clampPct((s.level - AMBIENT_DB) / (REFERENCE_DB - AMBIENT_DB) * 100);
             s.basePct = basePct;
-            s.redDist = basePct - distPct;            // tłumienie przez odległość (stożek/α)
-            s.redBud = distPct - afterBudPct;         // przeszkody: budynki w stożku
-            s.redTer = afterBudPct - s.burden;        // przeszkody: teren (wał)
+            s.redDist = basePct - distPct;            // tłumienie przez odległość
+            s.redBud = distPct - afterBudPct;         // tłumienie przez budynki (raz!)
+            s.redTer = afterBudPct - s.burden;        // tłumienie przez teren (wał)
             s.finalPct = s.burden;
         }
 
