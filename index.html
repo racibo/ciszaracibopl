@@ -15,7 +15,7 @@
             display: flex; height: 100vh; color: #2c3e50;
         }
         #sidebar {
-            width: 380px; background: #fff; padding: 18px;
+            width: 480px; background: #fff; padding: 18px;
             box-shadow: 2px 0 8px rgba(0,0,0,0.12); z-index: 1000;
             display: flex; flex-direction: column; overflow-y: auto;
         }
@@ -69,8 +69,10 @@
 
         .scale-legend { font-size: 0.72em; color: #95a5a6; text-align: center; margin-bottom: 8px; }
 
-        table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
-        th, td { text-align: left; padding: 5px 4px; border-bottom: 1px solid #eee; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.72em; table-layout: fixed; }
+        th, td { text-align: left; padding: 4px 3px; border-bottom: 1px solid #eee; overflow: hidden; }
+        th:nth-child(1) { width: 34%; }
+        th:nth-child(n+2) { width: 13.2%; }
         th { color: #7f8c8d; font-weight: 600; }
         .pill { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 0.78em; }
         .pill.red { background: #fdecea; color: #c0392b; }
@@ -112,7 +114,7 @@
         <p class="hint">…lub kliknij dowolny punkt na mapie, by go potwierdzić.</p>
         <button onclick="useGPS()" style="width:100%;margin-top:4px;background:#8e44ad;color:#fff;border:none;border-radius:4px;padding:9px;cursor:pointer;font-weight:600;">📍 Użyj mojej lokalizacji GPS</button>
 
-        <details open>
+        <details>
             <summary>⚙️ Ustawienia analizy</summary>
 
             <div class="set-row"><label>Zasięg analizy (m)</label>
@@ -133,6 +135,12 @@
             </div>
         </details>
 
+        <div class="thread-toggle" style="margin-top:8px;">
+            <input type="checkbox" id="showHistory" checked>
+            <label for="showHistory">🗺️ Pokaż przebadane miejsca (mapa hałasu)</label>
+            <a href="#" id="clearHistory" style="font-size:0.72em;margin-left:6px;">wyczyść</a>
+        </div>
+
         <div id="loader">Pobieram sieć dróg i kolei oraz profil terenu…</div>
 
         <div id="result">
@@ -140,7 +148,9 @@
                 <div id="scoreCircle" class="score-circle"><span class="num">0</span><span class="of">/ 100</span></div>
                 <div id="riskLevel">—</div>
             </div>
-            <div class="scale-legend">0 = absolutna cisza · 100 = hałas jak na środku autostrady i przy torach</div>
+            <div class="scale-legend">0 = absolutna cisza (las, szept ~30 dB) · 100 = hałas jak na środku autostrady i przy torach (~80 dB).
+                Dla porównania: rozmowa ~60 dB, ruchliwa ulica ~70 dB, pociąg/tramwaj ~75 dB.</div>
+            <div id="noiseScale" style="font-size:0.72em;margin:6px 0 2px;line-height:1.35;color:#5d6d7e;"></div>
 
             <div id="assessment" style="font-size:0.85em;line-height:1.5;margin:10px 0;padding:10px;background:#f0fbf8;border-radius:8px;"></div>
 
@@ -598,6 +608,7 @@
     // tej samej lokalizacji nie pobierać danych od nowa.
     const LS_WAYS = 'cisza_ways_v1';
     const LS_BUILD = 'cisza_build_v1';
+    const LS_HISTORY = 'cisza_history_v1';
     const CACHE_CAP = 40;
     const _cache = new Map();
     const _bCache = new Map();
@@ -615,6 +626,15 @@
     }
 
     // Opisowa ocena najbardziej uciążliwego źródła
+    function dbAnalogy(level) {
+        if (level < 35) return 'ciszej niż w bibliotece';
+        if (level < 45) return 'jak ciche przedmieście w nocy';
+        if (level < 55) return 'jak spokojna rozmowa w domu';
+        if (level < 65) return 'jak ruchliwa ulica za oknem';
+        if (level < 75) return 'jak główna droga w godzinach szczytu';
+        if (level < 85) return 'jak autostrada lub pociąg tuż obok';
+        return 'jak stacja kolejowa w szczycie';
+    }
     function buildAssessment(d, sources, st) {
         const dM = Math.round(d.dist);
         const grp = GROUP_LABEL[d.group].toLowerCase();
@@ -624,7 +644,8 @@
         else if (d.group === 'krajowa') intensity = 'o znacznym natężeniu ruchu';
         else if (d.group === 'wojew') intensity = 'o umiarkowanym ruchu';
         else intensity = 'o niewielkim ruchu';
-        let txt = `Największym źródłem hałasu jest oddalona o ${dM} m ${grp}${nm}. To droga ${intensity}; hałas może przeszkadzać przy otwartych oknach, szczególnie w godzinach szczytu.`;
+        const lvl = Math.round(d.level);
+        let txt = `Największym źródłem hałasu jest oddalona o ${dM} m ${grp}${nm}. To droga ${intensity}; poza osłoną budynkową generuje ok. ${lvl} dB – ${dbAnalogy(lvl)}. Hałas może przeszkadzać przy otwartych oknach, szczególnie w godzinach szczytu.`;
         const others = sources.length - 1;
         if (others > 0) txt += ` W pobliżu są też inne szlaki (${others}), które łącznie podnoszą tło hałasu.`;
         return txt;
@@ -1293,6 +1314,15 @@
             const domSec = sectors[domSecIdx];
             assessment += ` Najgłośniej z kierunku ${compass(domSec.dir)} (${Math.round(domSec.dir)}°)` +
                 (domSec.top ? ` – ${domSec.top.name}.` : '.');
+            // Źródła okresowe (szkoła/boisko/stadion): hałas rośnie w godzinach ich pracy
+            const pSrc = sources.filter(s => s.periodic);
+            if (pSrc.length) {
+                let pE = 0, tE = 0;
+                for (const s of sources) { const e = s.energy * (s.terrainFactor || 1); tE += e; if (s.periodic) pE += e; }
+                const addDb = tE > pE ? Math.round(10 * Math.log10(tE / (tE - pE))) : 0;
+                const names = [...new Set(pSrc.map(s => s.label))].join(', ');
+                assessment += ` 🏫 W pobliżu źródła okresowe (${names}): w godzinach ich pracy (lekcje, treningi, mecze) hałas rośnie o ok. ${addDb} dB – w przerwach, wakacjach i w nocy jest wyraźnie ciszej.`;
+            }
         } else {
             assessment = 'W promieniu analizy nie wykryto istotnych dróg ani linii kolejowych – miejsce zapowiada się bardzo cicho.';
         }
@@ -1327,8 +1357,9 @@
         // Źródła bardzo bliskie punktu (nawet krótkie) oraz osłonięte wałem mogą być
         // poza top 6 wg energii całkowitej – dopisujemy je, by nie znikały z tabeli.
         const nearSrc = sources.filter(s => s.dist <= 300 && !topSrc.includes(s));
-        const bermSrc = sources.filter(s => (s.terrainFactor || 1) < 0.999 && !topSrc.includes(s) && !nearSrc.includes(s));
-        topSrc = topSrc.concat(nearSrc, bermSrc).slice(0, 10);
+        const bermSrc = sources.filter(s => (s.terrainFactor || 1) < 0.999 && !topSrc.includes(s) && !nearSrc.includes(s) && !bermSrc.includes(s));
+        const periodicSrc = sources.filter(s => s.periodic && !topSrc.includes(s) && !nearSrc.includes(s) && !bermSrc.includes(s));
+        topSrc = topSrc.concat(nearSrc, bermSrc, periodicSrc).slice(0, 12);
         const top = topSrc.map(s => ({
             name: s.label, type: GROUP_TYPE[s.group], category: GROUP_LABEL[s.group],
             key: s.uid,
@@ -1355,9 +1386,15 @@
                 .filter(s => s.closest && isFinite(s.level) && s.dist <= ANALYSIS_R && (s.level > 30 || s.dist <= 400))
                 .sort((a, b) => b.energy - a.energy)
                 .slice(0, 60);
+            const maxE = tlist.length ? tlist[0].energy : 0;
             for (const s of tlist) {
-                const col = levelColor(s.level);
-                const pl = L.polyline([[lat, lng], s.closest], { color: col, weight: 2, opacity: 0.7, dashArray: '4 4' });
+                // Najgłośniejsze źródła (dominujące) – wyraźna czerwona, gruba nitka.
+                const loud = s.energy >= 0.4 * maxE;
+                const col = loud ? '#c0392b' : levelColor(s.level);
+                const pl = L.polyline([[lat, lng], s.closest], {
+                    color: col, weight: loud ? 4 : 1.5, opacity: loud ? 0.95 : 0.5,
+                    dashArray: loud ? null : '4 4'
+                });
                 const dirTxt = s.closest ? compass(bearingDeg([lat, lng], s.closest)) : '';
                 pl.bindTooltip(`${s.label} · ${Math.round(s.level)} dB · ${Math.round(s.dist)} m · kier. ${dirTxt}` +
                     (s.periodic ? ' · 🌬️ okresowo' : ''));
@@ -1376,6 +1413,7 @@
         };
         if (opts.provisional) _lastProv = { score: renderData.score, level_db: renderData.level_db };
         else if (_lastProv) renderData.provisionalCompare = _lastProv;
+        if (!opts.provisional) saveHistory(lat, lng, renderData.score, renderData.level_db);
         render(renderData);
     }
 
@@ -1507,6 +1545,10 @@
         c.style.background = color;
         document.getElementById('riskLevel').innerText =
             label + '  (poziom ' + d.level_db + ' dB)';
+        const ns = document.getElementById('noiseScale');
+        if (ns) ns.innerHTML = (d.level_db != null)
+            ? `Twój wynik to <b>${d.level_db} dB</b> – ${dbAnalogy(d.level_db)}.`
+            : '';
         const aEl = document.getElementById('assessment');
         aEl.innerHTML = d.assessment ? d.assessment.replace(/</g, '&lt;') : '';
         if (d.provisionalCompare) {
@@ -1575,6 +1617,45 @@
     // Warstwa nitek (pajęczyna) + róża na mapie
     const threadLayer = L.layerGroup().addTo(map);
     const roseLayer = L.layerGroup().addTo(map);
+    // Warstwa przebadanych miejsc (mapa hałasu) – duże kolorowe punkty
+    const historyLayer = L.layerGroup();
+
+    function scoreColor(sc) {
+        return sc <= 25 ? '#1e8449' : sc <= 50 ? '#27ae60' : sc <= 75 ? '#f39c12' : '#c0392b';
+    }
+    function loadHistory() {
+        try { return JSON.parse(localStorage.getItem(LS_HISTORY) || '[]'); } catch (e) { return []; }
+    }
+    function renderHistory() {
+        historyLayer.clearLayers();
+        for (const p of loadHistory()) {
+            const col = scoreColor(p.score);
+            const m = L.circleMarker([p.lat, p.lng], {
+                radius: 8 + Math.min(12, p.score / 12), color: '#fff', weight: 2,
+                fillColor: col, fillOpacity: 0.8
+            });
+            m.bindPopup(`<b>Wynik: ${p.score}/100</b> · ${p.level} dB<br>` +
+                `<span style="font-size:0.8em;color:#7f8c8d;">${new Date(p.t).toLocaleString('pl-PL')}</span>`);
+            m.addTo(historyLayer);
+        }
+    }
+    function saveHistory(lat, lng, score, level) {
+        const h = loadHistory();
+        h.push({ lat, lng, score, level, t: Date.now() });
+        localStorage.setItem(LS_HISTORY, JSON.stringify(h.slice(-300)));
+        if (document.getElementById('showHistory').checked) renderHistory();
+    }
+    document.getElementById('showHistory').addEventListener('change', e => {
+        if (e.target.checked) { renderHistory(); historyLayer.addTo(map); }
+        else map.removeLayer(historyLayer);
+    });
+    document.getElementById('clearHistory').addEventListener('click', e => {
+        e.preventDefault();
+        localStorage.removeItem(LS_HISTORY);
+        historyLayer.clearLayers();
+    });
+    if (document.getElementById('showHistory').checked) { renderHistory(); historyLayer.addTo(map); }
+
     map.on('click', e => analyze(e.latlng.lat, e.latlng.lng));
 
     // Kliknięcie nazwy szlaku w tabeli -> przybliżenie jego stożka na mapie

@@ -111,3 +111,25 @@ teraz być na mapie (cieńsza linia + gradient), w pajęczynie (nitka do punktu)
 Jeśli wciąż jej brak → to kwestia danych (brak way-a w kafelku Geofabrik) — sprawdź w
 https://www.openstreetmap.org/ czy droga istnieje; w razie potrzeby przebuduj kafelki
 (ręczne uruchomienie workflow `cache.yml`).
+
+## Usprawnienia UX (commit po 2fce91f)
+1. **Panel ustawień zwinięty** (`<details>` bez `open`) — przestał zajmować miejsce w
+   wynikach; suwaki (zasięg/wał/threads) nadal działają (readSettings czyta po id).
+   **Sidebar poszerzony do 480px**, tabela `table-layout:fixed` + mniejszy font → brak
+   przewijania poziomego. Dodany przełącznik `showHistory` (mapa hałasu).
+2. **Opisowa skala hałasu + porównania**: `scale-legend` wzbogacone o analogie dB
+   (szept 30 / rozmowa 60 / ulica 70 / autostrada 80). `dbAnalogy(level)` zwraca frazę
+   (np. "jak główna droga w szczycie"); użyta w `buildAssessment` i w nowym `#noiseScale`
+   ("Twój wynik to X dB – [analogia].").
+3. **Najgłośniejsze nitki pajęczyny na czerwono**: w pętli nitek `loud = energy >= 0.4*maxE`
+   → kolor `#c0392b`, grubość 4, bez przerywania; reszta cienka przerywana wg `levelColor`.
+4. **Mapa hałasu / przebadane miejsca**: `saveHistory(lat,lng,score,level)` →
+   `localStorage[cisza_history_v1]` (do 300 pkt). `historyLayer` (L.layerGroup) rysuje
+   kolorowe `circleMarker` (kolor wg `scoreColor`, promień rośnie z wynikiem) z popupem.
+   Przełącznik `showHistory` (domyślnie włączony) + link "wyczyść" (`clearHistory`).
+5. **Źródła punktowe (POI) + hałas okresowy**: szkoły/boiska/stadiony uwzględniane (już
+   były), teraz **zawsze pokazywane w tabeli** (periodicSrc dopisane do topSrc, limit 12).
+   W `buildAssessment` dopisana informacja: "w godzinach pracy (lekcje/treningi/mecze)
+   hałas rośnie o ok. X dB" — X = różnica dB między sumą energii całkowitej a bez
+   źródeł okresowych (`10*log10(tE/(tE-pE))`).
+
