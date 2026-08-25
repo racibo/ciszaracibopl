@@ -24,10 +24,13 @@ jobs:
       - name: Install pyosmium
         run: python -m pip install --quiet osmium
 
-      - name: Download Geofabrik Poland extract (BEZ Overpassa)
+      - name: Download Geofabrik voivodeship extracts (BEZ Overpassa)
         run: |
-          curl -sSL -o "$RUNNER_TEMP/poland.osm.pbf" https://download.geofabrik.de/europe/poland/poland-latest.osm.pbf
-          echo "GEOFABRIK_PBF=$RUNNER_TEMP/poland.osm.pbf" >> "$GITHUB_ENV"
+          BASE=https://download.geofabrik.de/europe/poland
+          curl -sSL -o "$RUNNER_TEMP/pomorskie.osm.pbf"        "$BASE/pomorskie-latest.osm.pbf"
+          curl -sSL -o "$RUNNER_TEMP/warminsko-mazurskie.osm.pbf" "$BASE/warminsko-mazurskie-latest.osm.pbf"
+          curl -sSL -o "$RUNNER_TEMP/kujawsko-pomorskie.osm.pbf" "$BASE/kujawsko-pomorskie-latest.osm.pbf"
+          echo "GEOFABRIK_PBFS=$RUNNER_TEMP/pomorskie.osm.pbf:$RUNNER_TEMP/warminsko-mazurskie.osm.pbf:$RUNNER_TEMP/kujawsko-pomorskie.osm.pbf" >> "$GITHUB_ENV"
 
       - name: Generate static tiles
         run: python scripts/build-cache-geofabrik.py

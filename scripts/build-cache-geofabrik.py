@@ -86,24 +86,35 @@ class Handler(osmium.SimpleHandler):
                 else:
                     t['ways'].append({'type': 'way', 'id': w.id, 'geometry': geom, 'tags': tags})
 
+def resolve_sources():
+    raw = os.environ.get('GEOFABRIK_PBFS')
+    if raw:
+        files = [s.strip() for s in raw.split(os.pathsep) if s.strip()]
+    else:
+        single = os.environ.get('GEOFABRIK_PBF')
+        files = [single] if single else []
+    resolved = [f for f in files if f and os.path.exists(f)]
+    if resolved:
+        return resolved
+    for cand in (
+        os.path.join(ROOT, 'poland.osm.pbf'),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'poland.osm.pbf'),
+        os.path.join(tempfile.gettempdir(), 'poland.osm.pbf'),
+    ):
+        if os.path.exists(cand):
+            return [cand]
+    return []
+
 def main():
     os.makedirs(TILES_DIR, exist_ok=True)
-    src = os.environ.get('GEOFABRIK_PBF')
-    if not src or not os.path.exists(src):
-        for cand in (
-            os.path.join(ROOT, 'poland.osm.pbf'),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'poland.osm.pbf'),
-            os.path.join(tempfile.gettempdir(), 'poland.osm.pbf'),
-        ):
-            if os.path.exists(cand):
-                src = cand
-                break
-    if not src or not os.path.exists(src):
-        print('Brak pliku PBF (ustaw GEOFABRIK_PBF lub pobierz poland-latest.osm.pbf).')
+    sources = resolve_sources()
+    if not sources:
+        print('Brak pliku PBF (ustaw GEOFABRIK_PBFS lub pobierz extracty Geofabrik).')
         sys.exit(1)
-    print('Czytam', src, '...')
     h = Handler()
-    h.apply_file(src, locations=True)
+    for src in sources:
+        print('Czytam', src, '...')
+        h.apply_file(src, locations=True)
     print('Elementy przetworzone. Zapisuję kafelki...')
 
     count = 0
@@ -126,7 +137,7 @@ def main():
                       'lonMin': min(lons), 'lonMax': max(lons)},
             'regions': [{'name': n, 'latMin': a, 'latMax': b, 'lonMin': c, 'lonMax': d}
                         for (n, a, b, c, d) in REGIONS],
-            'tiles': count, 'source': 'geofabrik:poland-latest.osm.pbf'
+            'tiles': count, 'source': 'geofabrik:voivodeship-latest.osm.pbf'
         }
         with open(os.path.join(TILES_DIR, 'manifest.json'), 'w', encoding='utf-8') as f:
             json.dump(manifest, f, indent=2, ensure_ascii=False)
