@@ -125,7 +125,8 @@ z `closest` w azymucie ~75-82°/~170 m (droga wojewódzka, głośniejsza od loka
 
 ## Jak zweryfikować (punkt 54.405730, 18.570462)
 Po wdrożeniu (kilka minut na GitHub Pages) kliknij w ten punkt. Bliska dwupasmówka powinna
-teraz być na mapie (cieńsza linia + gradient), w pajęczynie (nitka do punktu) i w tabeli.
+teraz być na mapie (cieńsza szara linia + gradient widoczności), w pajęczynie (promień
+kierunkowy + szara linka do źródła) i w tabeli.
 Jeśli wciąż jej brak → to kwestia danych (brak way-a w kafelku Geofabrik) — sprawdź w
 https://www.openstreetmap.org/ czy droga istnieje; w razie potrzeby przebuduj kafelki
 (ręczne uruchomienie workflow `cache.yml`).
@@ -201,5 +202,18 @@ https://www.openstreetmap.org/ czy droga istnieje; w razie potrzeby przebuduj ka
 - **Opis dopasowany do poziomu**: `buildAssessment` nie pisze „hałas może przeszkadzać" dla
   cichego źródła (<45 dB); tekst zależy od efektywnego dB (nieodczuwalny / lekko słychać /
   przeszkadza). Usunięto mylące „poza osłoną budynkową".
+
+## Przebudowa mapy (bieżąca sesja – commit po 885f219)
+- **Ulice na mapie obojętne (szare)** — `baseCol` (cały przebieg way-a) i `c` (odcinki w
+  stożku) ustawione na `#aab0b6`. Przestały sygnalizować hałas kolorem, by nie mylić z
+  pajęczyną; tooltipy z % przesłonięcia zachowane (tylko orientacja).
+- **Pajęczyna = radialne promienie we wszystkich kierunkach** (zamiast nitek do źródeł): dla
+  każdego z 36 sektorów (`sectors`/`sectorLevels`) promień od punktu, długość+kolor wg poziomu
+  hałasu z tego kierunku (`levelColor`: czerwony=najgłośniej → zielony=najciszej). Cienkie
+  szare przerywane linki do konkretnych źródeł tylko do orientacji (tooltip z dB/kierunkiem).
+  Etykieta `showThreads`: „Pokaż pajęczynę hałasu (kolor = poziom z kierunku)".
+- **Wyższy kontrast małego tekstu**: `.small` (#95a5a6→#3f4a56), `.edu-note` (#9ca3af→#6b7280),
+  podteksty tabeli/historii (#7f8c8d→#566573), większy font i line-height — przestały zlewać się
+  z tłem.
 
 
