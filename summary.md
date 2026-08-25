@@ -45,17 +45,37 @@ score), ale **nie był wizualizowany**. Przyczyny:
    — niestabilne; mogło rozbijać jeden way na klucze.
 5. (Hipotetycznie) **Starość cache** — dla Trójmiasto cache z Geofabrik, odświeżany monthly;
    clear localStorage nic nie da (cache statyczny jest władczy), ew. trzeba przebudować kafelki.
+   Nadal NIEZWERYFIKOWANE (poprawki dotyczyły UI/progów, nie danych) — zob. Droga krajowa.
 
-## Poprawki właśnie wprowadzone (commit 3dd2267)
-- `index.html:1174` — `drawList`: rysuj **wszystkie** źródła w promieniu `ANALYSIS_R`
-  (limit 25, sortowane wg energii) zamiast top 8 → bliskie/krótkie/odsłonięte nie znikają.
-- `index.html:1251` — tabela: oprócz top 6 dopisujemy źródła `dist <= 300 m` (`nearSrc`)
-  oraz osłonięte wałem (`bermSrc`), limit 10.
-- `index.html:1283` — pajęczyna: pokazuj bliskie (`dist <= 400 m`) zawsze, dalsze gdy
-  `level > 30` (próg obniżony z 35).
-- `index.html:975` + `:1010` — grupowanie unnamed way-ów po stabilnym `el.id`
-  (`group|#id`) zamiast zaokrąglonych współrzędnych.
-- Deploy: push na `master` → GitHub Pages.
+## Poprawki (commit 3dd2267) — UI/progi
+- `drawList`: rysuj wszystkie źródła w `ANALYSIS_R` (limit 25) zamiast top 8.
+- Tabela: + źródła `dist<=300 m` i osłonięte wałem (limit 10).
+- Pajęczyna: bliskie (`<=400 m`) zawsze, dalsze gdy `level>30`.
+- Próba grupowania unnamed po `el.id` (`group|#id`) — **MARTWY KOD** (zob. bug #1 niżej).
+
+## Poprawki (commit e9920a7) — właściwe bugi
+**Bug #1 (główny): fallback nazwy zabijał grupowanie po id.** `cands.push` nadpisywał
+`name` etykietą (`GROUP_LABEL[group]`), więc `c.name` było zawsze prawdziwe i gałąź
+`group|#id` nigdy się nie wykonywała → nienazwane tory tramwajowe (OSM nie ma `name` na
+way-u, nazwa jest na relacji) zlewały się w jedno "megaźródło" na promień CUTOFF (tramwaj
+1000 m). Jego `closest` to dowolny wygrany fragment, nie realnie najbliższy.
+Poprawka: `name: tags.name || null` + osobna `label: tags.name || GROUP_LABEL[group]`;
+akumulator i `raw` trzymają obie; klucz grupowania teraz działa (`null`→`group|#id`).
+
+**Bug #2: kolizja klucza `group|name` przy rysowaniu i w tabeli.** `coneByKey[key]=grp`
+nadpisywał się → przy wielu źródłach z tą samą nazwą wygrywał ostatni (najsłabszy, zwykle
+najdalszy) → kliknięcie w tabeli (`focusCone`) pokazywało najdalszy punkt linii.
+Poprawka: każde źródło dostaje unikalne `uid: 'src'+n` (w pętli `raw`), używane wszędzie
+zamiast `group|name` — rysowanie, tabela (`key`), `focusCone`, tooltipy/pajęczyna używają `label`.
+Dodano `console.table(sources.map(...))` do diagnostyki bez zgadywania.
+
+Efekt: tramwaj rozdziela się na fizyczne odcinki; dominujące źródło to realnie najbliższe/
+najgłośniejsze; kliknięcie w tabeli przybliża właściwy stożek.
+
+## Droga krajowa (hipoteza #5 — wciąż otwarta)
+Podobno bliski odcinek (54.405730, 18.570462) nie ma tego samego `name=` co daleki
+(54.406643, 18.569947). To kwestia danych w kafelku Geofabrik, nie logiki. Sprawdź na
+openstreetmap.org i ew. przebuduj `cache.yml` (workflow_dispatch).
 
 ## Jak zweryfikować (punkt 54.405730, 18.570462)
 Po wdrożeniu (kilka minut na GitHub Pages) kliknij w ten punkt. Bliska dwupasmówka powinna
