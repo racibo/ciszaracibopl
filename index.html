@@ -840,8 +840,10 @@
 
     // ---------------- Statyczny cache w kafelkach (GitHub Actions) ----------------
     // Jeśli istnieją wstępnie wygenerowane kafelki JSON (tiles/<gx>_<gy>.json),
-    // przeglądarka używa ich zamiast live Overpass. Kafelki pokrywają obszar
-    // Trójmiasta i są odświeżane raz w miesiącu przez workflow na GitHubie.
+    // przeglądarka używa ich zamiast live Overpass. Kafelki pokrywają wybrane
+    // obszary (REGIONS w build-cache-geofabrik.py: Trójmiasto, Biskupiec,
+    // Ciechocinek, Aleksandrów Kujawski, Krutyń) i są odświeżane raz w miesiącu
+    // przez workflow na GitHubie (źródło: Geofabrik Poland, BEZ Overpassa).
     const STATIC_ORIGIN_LAT = 54.30, STATIC_ORIGIN_LON = 18.40, STATIC_CELL = 0.02;
     const STATIC_TILE_BASE = 'tiles/';
     const _staticTiles = new Map();
@@ -869,8 +871,11 @@
             const ox = man.originLon != null ? man.originLon : STATIC_ORIGIN_LON;
             const oc = man.cell != null ? man.cell : STATIC_CELL;
             const mx = Math.round((lon - ox) / oc), my = Math.round((lat - man.originLat) / oc);
-            const bb = man.bbox;
-            const covered = bb && lon >= bb.lonMin && lon <= bb.lonMax && lat >= bb.latMin && lat <= bb.latMax;
+            const regions = (man.regions && man.regions.length)
+                ? man.regions
+                : (man.bbox ? [man.bbox] : []);
+            const covered = regions.some(r =>
+                lon >= r.lonMin && lon <= r.lonMax && lat >= r.latMin && lat <= r.latMax);
             if (covered) {
                 try {
                     const ctrl = new AbortController();
