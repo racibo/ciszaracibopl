@@ -145,3 +145,19 @@ https://www.openstreetmap.org/ czy droga istnieje; w razie potrzeby przebuduj ka
   85 dB praca), wpływ na zdrowie (NIOSH/CDC), porady ochronne. Treść edukacyjna, nie
   zastępuje pomiaru akustycznego.
 
+## Przebudowa wyników (bieżąca sesja – commit po 717ee4b)
+- **Usunięto różę kierunkową (pajęczynę w wynikach)** — `drawRose` i `#roseWrap` usunięte;
+  nitki na mapie (threadLayer) pozostają (kolor `levelColor`, najgłośniejsze pogrubione).
+- **Wynik końcowy w decybelach, nie 0–100**: `scoreCircle` pokazuje `level_db` dB; pod nim
+  **pasek zdrowotny** (`#dbGauge`) z gradientem zielona→czerwona i zaznaczonymi strefami
+  (30 / 55 / 70·norma / 85⚠ / 120) oraz markerem na aktualnym poziomie (`#dbMarker`).
+- **Tabela zwarta i wyraźna**: 4 kolumny (Źródło / Poziom dB / Tłumienia / Wkład),
+  pogrubione czcionki (`#srcTable` CSS), tłumienia w jednej komórce.
+- **Panel edukacyjny interpretuje wynik**: `eduInterpretation(level)` generuje dynamiczny
+  opis (co oznacza X dB + wpływ na zdrowie wg progów 40/55/70/85/100), statyczna wiedza w
+  zwiniętym `<details class="edu-sub">`.
+- **Mapa hałasu (historia) opcjonalna i lokalna**: `showHistory` domyślnie **wyłączone**;
+  markery w **ciągłym gradientzie HSL** (niski wynik=zieleń → wysoki=czerwień), `scoreColor`
+  przerobione na `hsl((1-score/100)*120,65%,45%)`. Usunięto martwy `roseLayer`.
+
+

@@ -57,15 +57,25 @@
         #loader { display: none; text-align: center; margin: 12px 0; color: #7f8c8d; font-size: 0.9em; }
 
         #result { display: none; }
-        .score-wrap { text-align: center; margin: 6px 0 12px; }
+        .score-wrap { text-align: center; margin: 6px 0 8px; }
         .score-circle {
-            width: 110px; height: 110px; border-radius: 50%; background: #eee;
+            width: 120px; height: 120px; border-radius: 50%; background: #eee;
             display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
-            color: #fff; font-weight: 700;
+            color: #fff; font-weight: 800; box-shadow: 0 2px 6px rgba(0,0,0,.18);
         }
-        .score-circle .num { font-size: 2em; line-height: 1; }
-        .score-circle .of { font-size: 0.7em; opacity: 0.85; }
-        #riskLevel { font-size: 0.95em; font-weight: 600; margin-top: 6px; }
+        .score-circle .num { font-size: 2.4em; line-height: 1; }
+        .score-circle .of { font-size: 0.8em; opacity: 0.9; }
+        #riskLevel { font-size: 1em; font-weight: 700; margin-top: 6px; }
+        #dbGaugeWrap { margin: 4px 4px 2px; }
+        #dbGauge { position: relative; height: 16px; border-radius: 8px;
+            background: linear-gradient(to right, #1e8449 0%, #27ae60 22%, #b7d40a 30%, #f1c40f 44%, #e67e22 61%, #c0392b 100%);
+            box-shadow: inset 0 1px 2px rgba(0,0,0,.2); }
+        #dbMarker { position: absolute; top: -3px; width: 4px; height: 22px; background: #2c3e50;
+            border-radius: 2px; transform: translateX(-2px); box-shadow: 0 0 0 1px #fff; }
+        #dbMarker::after { content: attr(data-db); position: absolute; top: -15px; left: 50%;
+            transform: translateX(-50%); font-size: 10px; font-weight: 700; color: #2c3e50; white-space: nowrap; }
+        .gauge-labels { display: flex; justify-content: space-between; font-size: 9px; color: #95a5a6; margin-top: 2px; }
+        .gauge-labels .ok { color: #1e8449; } .gauge-labels .warn { color: #c0392b; font-weight: 700; }
 
         .scale-legend { font-size: 0.72em; color: #95a5a6; text-align: center; margin-bottom: 8px; }
 
@@ -93,13 +103,20 @@
         .edu-list li { margin: 2px 0; }
         .edu-note { font-size: 0.85em; color: #9ca3af; font-style: italic; }
 
-        #roseWrap { display: none; margin-top: 12px; text-align: center; }
-        #rose { display: inline-block; }
-        #rose svg { max-width: 100%; height: auto; }
-        .rose-title { font-weight: 600; font-size: 0.9em; margin: 4px 0; }
-        .dir-legend { font-size: 0.7em; color: #95a5a6; margin: 4px 0 8px; line-height: 1.3; }
         .thread-toggle { font-size: 0.82em; margin: 6px 0 2px; }
         .pill.periodic { background: #fef9e7; color: #b7950b; }
+        #srcTable { width: 100%; border-collapse: collapse; font-size: 0.92em; line-height: 1.3; }
+        #srcTable th { text-align: left; font-size: 0.74em; text-transform: uppercase; letter-spacing: .03em;
+            color: #5d6d7e; border-bottom: 2px solid #d5dbdb; padding: 5px 6px; font-weight: 800; }
+        #srcTable td { padding: 6px; border-bottom: 1px solid #eceff1; vertical-align: top; }
+        #srcTable td.name { font-weight: 800; }
+        #srcTable td.db { font-weight: 800; font-size: 1.05em; white-space: nowrap; }
+        #srcTable td.red { font-size: 0.82em; color: #7f8c8d; }
+        #srcTable td.wk { font-weight: 800; text-align: right; white-space: nowrap; }
+        .edu-result { background: #fff; border: 1px solid #e2e8f0; border-left: 4px solid #2980b9;
+            border-radius: 6px; padding: 8px 10px; font-size: 0.88em; line-height: 1.5; }
+        .edu-result b { color: #1f2937; }
+        .edu-sub { margin-top: 8px; font-size: 0.9em; }
 
         @media (max-width: 768px) {
             body { flex-direction: column; }
@@ -144,7 +161,7 @@
         </details>
 
         <div class="thread-toggle" style="margin-top:8px;">
-            <input type="checkbox" id="showHistory" checked>
+                <input type="checkbox" id="showHistory">
             <label for="showHistory">🗺️ Pokaż przebadane miejsca (mapa hałasu)</label>
             <a href="#" id="clearHistory" style="font-size:0.72em;margin-left:6px;">wyczyść</a>
         </div>
@@ -153,25 +170,23 @@
 
         <div id="result">
             <div class="score-wrap">
-                <div id="scoreCircle" class="score-circle"><span class="num">0</span><span class="of">/ 100</span></div>
+                <div id="scoreCircle" class="score-circle"><span class="num">0</span><span class="of">dB</span></div>
                 <div id="riskLevel">—</div>
             </div>
-            <div class="scale-legend">0 = absolutna cisza (las, szept ~30 dB) · 100 = hałas jak na środku autostrady i przy torach (~80 dB).
-                Dla porównania: rozmowa ~60 dB, ruchliwa ulica ~70 dB, pociąg/tramwaj ~75 dB.</div>
+            <div id="dbGaugeWrap">
+                <div id="dbGauge"><div id="dbMarker" data-db=""></div></div>
+                <div class="gauge-labels">
+                    <span>30</span><span>55</span><span class="ok">70·norma</span><span class="warn">85⚠</span><span>120</span>
+                </div>
+            </div>
             <div id="noiseScale" style="font-size:0.72em;margin:6px 0 2px;line-height:1.35;color:#5d6d7e;"></div>
 
             <div id="assessment" style="font-size:0.85em;line-height:1.5;margin:10px 0;padding:10px;background:#f0fbf8;border-radius:8px;"></div>
 
             <div id="terrainNote"></div>
 
-            <div id="roseWrap">
-                <div class="rose-title">🧭 Głośność wg kierunków (pajęczyna)</div>
-                <div id="rose"></div>
-                <div class="dir-legend">Promień każdego płatka = poziom hałasu z tego kierunku.<br>Zielony = cicho, czerwony = głośno. Nitki na mapie pokazują konkretne źródła.</div>
-            </div>
-
             <table id="srcTable" style="margin-top:12px;">
-                <thead><tr><th>Szlak</th><th>Hałas<br> bazowy</th><th>Redukcja:<br>odległość</th><th>Redukcja:<br>budynki (stożek)</th><th>Redukcja:<br>teren (wał)</th><th>Końcowy<br>odczuwalny</th></tr></thead>
+                <thead><tr><th>Źródło</th><th>Poziom</th><th>Tłumienia</th><th>Wkład</th></tr></thead>
                 <tbody></tbody>
             </table>
             <div class="small" style="margin-top:8px;">
@@ -186,30 +201,34 @@
             Obliczenia wykonywane w przeglądarce – brak serwera.
         </div>
 
-        <details class="edu">
-            <summary>ℹ️ Decybele i zdrowie słuchu</summary>
-            <p><b>Decybel (dB)</b> to jednostka <b>logarytmiczna</b> – nie liniowa. +10 dB oznacza
-            <b>10 razy</b> większą energię dźwięku (i ~2× odczuwalną głośność); +3 dB to <b>2 razy</b>
-            więcej energii. Dlatego nawet mały przyrost w dB może oznaczać dużą zmianę.</p>
-            <p class="edu-h">Przykłady poziomów hałasu:</p>
-            <ul class="edu-list">
-                <li>30 dB – szept, bardzo cicha noc</li>
-                <li>40 dB – ciche biuro, biblioteka (polska norma w domu: <b>40 dnia / 30 w nocy</b>)</li>
-                <li>50–60 dB – szum lodówki, spokojna rozmowa</li>
-                <li>60–70 dB – telewizor, ruch na ulicy</li>
-                <li>70–80 dB – autostrada, odkurzacz (powyżej 70 dB szkodzi przy długim narażeniu)</li>
-                <li>85 dB – głośny zakład / słuchawki na full – <b>limit bezpiecznej pracy 8 h</b></li>
-                <li>90–100 dB – traktor, metro, klakson (słuch uszkadza się szybciej)</li>
-                <li>110–120 dB – koncert, start samolotu – <b>ból i ryzyko trwałego uszkodzenia</b></li>
-                <li>130+ dB – młot pneumatyczny, wybuchy</li>
-            </ul>
-            <p><b>Dlaczego to ważne:</b> długotrwały hałas powyżej 70 dB męczy i psuje sen, a powyżej
-            85 dB trwale niszczy komórki słuchowe (nieodwracalnie). Organizacja NIOSH/CDC podaje, że
-            bezpieczny czas przy 85 dB to 8 h, ale już przy 100 dB tylko 15 min.</p>
-            <p><b>Jak chronić słuch:</b> unikaj ciszy „pod korek", słuchaj do 60% głośności, noś
-            zatyczki/głuchy na koncertach i meczach, rób przerwy w hałasie. Sygnały ostrzegawcze:
-            szum w uszach po wyjściu, nie słyszysz rozmowy z 2 m, uczucie „gatka" w uszach.</p>
-            <p class="edu-note">Treść edukacyjna – nie zastępuje porady lekarza ani dokładnych pomiarów akustycznych.</p>
+        <details class="edu" open>
+            <summary>ℹ️ Co oznacza Twój wynik (decybele i zdrowie)</summary>
+            <div id="eduResult" class="edu-result">Kliknij punkt na mapie, aby zobaczyć interpretację wyniku.</div>
+            <details class="edu-sub">
+                <summary>Więcej o decybelach…</summary>
+                <p><b>Decybel (dB)</b> to jednostka <b>logarytmiczna</b> – nie liniowa. +10 dB oznacza
+                <b>10 razy</b> większą energię dźwięku (i ~2× odczuwalną głośność); +3 dB to <b>2 razy</b>
+                więcej energii. Dlatego nawet mały przyrost w dB może oznaczać dużą zmianę.</p>
+                <p class="edu-h">Przykłady poziomów hałasu:</p>
+                <ul class="edu-list">
+                    <li>30 dB – szept, bardzo cicha noc</li>
+                    <li>40 dB – ciche biuro, biblioteka (polska norma w domu: <b>40 dnia / 30 w nocy</b>)</li>
+                    <li>50–60 dB – szum lodówki, spokojna rozmowa</li>
+                    <li>60–70 dB – telewizor, ruch na ulicy</li>
+                    <li>70–80 dB – autostrada, odkurzacz (powyżej 70 dB szkodzi przy długim narażeniu)</li>
+                    <li>85 dB – głośny zakład / słuchawki na full – <b>limit bezpiecznej pracy 8 h</b></li>
+                    <li>90–100 dB – traktor, metro, klakson (słuch uszkadza się szybciej)</li>
+                    <li>110–120 dB – koncert, start samolotu – <b>ból i ryzyko trwałego uszkodzenia</b></li>
+                    <li>130+ dB – młot pneumatyczny, wybuchy</li>
+                </ul>
+                <p><b>Dlaczego to ważne:</b> długotrwały hałas powyżej 70 dB męczy i psuje sen, a powyżej
+                85 dB trwale niszczy komórki słuchowe (nieodwracalnie). Organizacja NIOSH/CDC podaje, że
+                bezpieczny czas przy 85 dB to 8 h, ale już przy 100 dB tylko 15 min.</p>
+                <p><b>Jak chronić słuch:</b> unikaj ciszy „pod korek", słuchaj do 60% głośności, noś
+                zatyczki/głuchy na koncertach i meczach, rób przerwy w hałasie. Sygnały ostrzegawcze:
+                szum w uszach po wyjściu, nie słyszysz rozmowy z 2 m, uczucie „gatka" w uszach.</p>
+                <p class="edu-note">Treść edukacyjna – nie zastępuje porady lekarza ani dokładnych pomiarów akustycznych.</p>
+            </details>
         </details>
     </div>
 
@@ -1538,76 +1557,62 @@
         return `rgb(${r},${g},${b})`;
     }
 
-    // Rysuje różę kierunkową (SVG): promień płatka = poziom hałasu z danego kierunku
-    function drawRose(levels, dominantDir) {
-        const el = document.getElementById('rose');
-        if (!levels || !levels.length) { el.innerHTML = ''; return; }
-        const N = levels.length, cx = 130, cy = 130, R0 = 16, maxR = 108;
-        const minL = 30, maxL = Math.max(90, Math.max(...levels));
-        const ang = (deg) => (deg - 90) * Math.PI / 180;
-        const pt = (deg, r) => [cx + r * Math.cos(ang(deg)), cy + r * Math.sin(ang(deg))];
-        let poly = '', spokes = '';
-        for (let i = 0; i < N; i++) {
-            const dir = i * (360 / N) + (360 / N) / 2;
-            const lv = levels[i];
-            const t = Math.max(0, Math.min(1, (lv - minL) / (maxL - minL)));
-            const r = R0 + t * (maxR - R0);
-            const [x, y] = pt(dir, r);
-            poly += (i === 0 ? 'M' : 'L') + x.toFixed(1) + ' ' + y.toFixed(1) + ' ';
-            const [x0, y0] = pt(dir, R0);
-            spokes += `<line x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="${levelColor(lv)}" stroke-width="3" stroke-linecap="round"/>`;
-        }
-        poly += 'Z';
-        const rings = [0.33, 0.66, 1].map(f =>
-            `<circle cx="${cx}" cy="${cy}" r="${(R0 + f * (maxR - R0)).toFixed(1)}" fill="none" stroke="#e0e0e0" stroke-width="1"/>`).join('');
-        const axes = ['N', 'E', 'S', 'W'].map((t, k) => {
-            const a = k * 90, [ax, ay] = pt(a, maxR + 10);
-            return `<text x="${ax.toFixed(1)}" y="${ay.toFixed(1)}" font-size="11" fill="#7f8c8d" text-anchor="middle" dominant-baseline="middle">${t}</text>`;
-        }).join('');
-        const [dx, dy] = pt(dominantDir, maxR + 10);
-        const domLabel = `<text x="${dx.toFixed(1)}" y="${dy.toFixed(1)}" font-size="10" fill="#c0392b" text-anchor="middle">${compass(dominantDir)}</text>`;
-        el.innerHTML = `<svg width="260" height="260" viewBox="0 0 260 260">` +
-            rings + axes + domLabel +
-            `<path d="${poly}" fill="rgba(231,76,60,0.12)" stroke="#c0392b" stroke-width="1"/>` +
-            spokes +
-            `<circle cx="${cx}" cy="${cy}" r="4" fill="#2c3e50"/></svg>`;
+    // Interpretacja wyniku w dB (panel edukacyjny)
+    function eduInterpretation(level) {
+        if (level == null) return 'Kliknij punkt na mapie, aby zobaczyć interpretację wyniku.';
+        const lvlTxt = `<b>${level} dB</b> – ${dbAnalogy(level)}`;
+        let health;
+        if (level < 40) health = 'To bardzo cicho, poniżej dopuszczalnej normy hałasu w domu (40 dB w dzień, 30 dB w nocy). Idealne dla wypoczynku i snu.';
+        else if (level < 55) health = 'Poziom cichy, mieści się w normie mieszkaniowej. Długotrwale bezpieczny dla słuchu i snu.';
+        else if (level < 70) health = 'Umiarkowany szum (jak ruch na ulicy). Wciąż akceptowalny, ale powyżej 70 dB długotrwały hałas zaczyna szkodzić.';
+        else if (level < 85) health = 'Hałas szkodliwy przy wielogodzinnym przebywaniu – według norm pracy 85 dB to granica 8 h bezpiecznej ekspozycji. Warto zadbać o ciszę w nocy.';
+        else if (level < 100) health = 'Hałas niebezpieczny: grozi trwałym uszkodzeniem słuchu przy dłuższej ekspozycji (przy 100 dB bezpieczne tylko ~15 min). Konieczna ochrona na zewnątrz.';
+        else health = 'Bardzo niebezpieczny poziom – ochrona słuchu (zatyczki/słuchawki) jest niezbędna już przy krótkim przebywaniu.';
+        return `Twój punkt ma poziom ${lvlTxt}.<br>${health}`;
     }
 
     function render(d) {
         document.getElementById('loader').style.display = 'none';
         document.getElementById('result').style.display = 'block';
+        const level = d.level_db;
         const c = document.getElementById('scoreCircle');
-        c.querySelector('.num').innerText = d.score;
+        c.querySelector('.num').innerText = (level != null ? level : '—');
 
         let color, label;
-        if (d.score <= 25) { color = '#1e8449'; label = 'Absolutna cisza 🌲'; }
-        else if (d.score <= 50) { color = '#27ae60'; label = 'Bardzo cicho 🍃'; }
-        else if (d.score <= 75) { color = '#f39c12'; label = 'Umiarkowany szum 🌆'; }
-        else { color = '#c0392b'; label = 'Głośno! 🚗🚆'; }
+        if (level == null) { color = '#95a5a6'; label = 'Brak danych'; }
+        else if (level < 40) { color = '#1e8449'; label = 'Absolutna cisza 🌲'; }
+        else if (level < 55) { color = '#27ae60'; label = 'Bardzo cicho 🍃'; }
+        else if (level < 70) { color = '#f1c40f'; label = 'Umiarkowany szum 🌆'; }
+        else if (level < 85) { color = '#e67e22'; label = 'Głośno – szkodliwe 🚗'; }
+        else { color = '#c0392b'; label = 'Bardzo głośno! 🚆'; }
         c.style.background = color;
-        document.getElementById('riskLevel').innerText =
-            label + '  (poziom ' + d.level_db + ' dB)';
+        document.getElementById('riskLevel').innerText = label;
+
+        // Pasek zdrowotny (dB) z zaznaczonymi strefami
+        const mk = document.getElementById('dbMarker');
+        if (level != null) {
+            const pct = Math.max(0, Math.min(100, (level - 30) / (120 - 30) * 100));
+            mk.style.left = pct + '%';
+            mk.setAttribute('data-db', level + ' dB');
+            document.getElementById('dbGauge').style.opacity = 1;
+        } else {
+            mk.style.left = '0%';
+            mk.setAttribute('data-db', '');
+            document.getElementById('dbGauge').style.opacity = 0.4;
+        }
         const ns = document.getElementById('noiseScale');
-        if (ns) ns.innerHTML = (d.level_db != null)
-            ? `Twój wynik to <b>${d.level_db} dB</b> – ${dbAnalogy(d.level_db)}.`
+        if (ns) ns.innerHTML = (level != null)
+            ? `Twój wynik to <b>${level} dB</b> – ${dbAnalogy(level)}.`
             : '';
         const aEl = document.getElementById('assessment');
         aEl.innerHTML = d.assessment ? d.assessment.replace(/</g, '&lt;') : '';
         if (d.provisionalCompare) {
             aEl.innerHTML += ' <span style="font-size:0.8em;opacity:0.75;">' +
-                'Wstępna ocena (bez ukształtowania terenu): <b>' + d.provisionalCompare.score +
-                '</b> / ' + d.provisionalCompare.level_db + ' dB</span>';
+                'Wstępna ocena (bez ukształtowania terenu): <b>' + d.provisionalCompare.level_db +
+                ' dB</b></span>';
         }
         document.getElementById('terrainNote').innerText = d.terrain_note || '';
-
-        // Róża kierunkowa (pajęczyna)
-        const roseWrap = document.getElementById('roseWrap');
-        if (d.sectors && d.sectors.length) {
-            roseWrap.style.display = 'block';
-            drawRose(d.sectors, d.dominantDir || 0);
-        } else {
-            roseWrap.style.display = 'none';
-        }
+        document.getElementById('eduResult').innerHTML = eduInterpretation(level);
 
         const tb = document.querySelector('#srcTable tbody');
         tb.innerHTML = '';
@@ -1622,20 +1627,19 @@
                 ? `<span style="font-size:0.74em;color:#7f8c8d;">przesłonięte: ${s.screen_pct}%</span>`
                 : '';
             const periodicBadge = s.periodic ? ` <span class="pill periodic">🌬️ okresowo</span>` : '';
-            const dirTxt = (s.dir != null) ? ` · kier. ${compass(s.dir)} (${s.dir}°)` : '';
+            const dirTxt = (s.dir != null) ? ` · ${compass(s.dir)} (${s.dir}°)` : '';
             const budCell = redCell(s.red_bud) +
                 (s.building_reduction_db ? ` <span class="pill green">−${s.building_reduction_db} dB</span>` : '');
+            const tlm = `${redCell(s.red_dist)} ${budCell} ${redCell(s.red_ter)}`;
             tr.innerHTML =
-                `<td><b style="cursor:pointer;color:#21618c;text-decoration:underline;" onclick="focusCone('${s.key}')" title="Pokaż na mapie">${s.name}</b>${periodicBadge}<br><span style="font-size:0.74em;color:#7f8c8d;">${s.type} · ${s.distance_m} m${dirTxt} · ${cone}</span></td>` +
-                `<td>${s.base_pct}%</td>` +
-                `<td>${redCell(s.red_dist)}</td>` +
-                `<td>${budCell}</td>` +
-                `<td>${redCell(s.red_ter)}</td>` +
-                `<td><span style="color:${burdenColor};font-weight:700;">${s.final_pct}/100</span></td>`;
+                `<td class="name"><b style="cursor:pointer;color:#21618c;text-decoration:underline;" onclick="focusCone('${s.key}')" title="Pokaż na mapie">${s.name}</b>${periodicBadge}<br><span style="font-size:0.74em;color:#7f8c8d;">${s.type} · ${s.distance_m} m${dirTxt} · ${cone}</span></td>` +
+                `<td class="db">${s.level} dB</td>` +
+                `<td class="red">${tlm}</td>` +
+                `<td class="wk" style="color:${burdenColor};">${s.final_pct}/100</td>`;
             tb.appendChild(tr);
         });
         if (!d.sources.length)
-            tb.innerHTML = '<tr><td colspan="6" style="color:#7f8c8d;">Brak szlaków w zasięgu.</td></tr>';
+            tb.innerHTML = '<tr><td colspan="4" style="color:#7f8c8d;">Brak szlaków w zasięgu.</td></tr>';
     }
 
     // ---------------- Mapa ----------------
@@ -1656,14 +1660,15 @@
     // Warstwa stożków akustycznych (rysowana w analyze)
     const coneLayer = L.layerGroup().addTo(map);
     const coneByKey = {};
-    // Warstwa nitek (pajęczyna) + róża na mapie
+    // Warstwa nitek (pajęczyna) na mapie
     const threadLayer = L.layerGroup().addTo(map);
-    const roseLayer = L.layerGroup().addTo(map);
     // Warstwa przebadanych miejsc (mapa hałasu) – duże kolorowe punkty
     const historyLayer = L.layerGroup();
 
     function scoreColor(sc) {
-        return sc <= 25 ? '#1e8449' : sc <= 50 ? '#27ae60' : sc <= 75 ? '#f39c12' : '#c0392b';
+        // ciągły gradient: niski wynik (cisza) = zieleń, wysoki (hałas) = czerwień
+        const hue = Math.max(0, Math.min(120, (1 - Math.max(0, Math.min(100, sc)) / 100) * 120));
+        return `hsl(${hue.toFixed(0)}, 65%, 45%)`;
     }
     function loadHistory() {
         try { return JSON.parse(localStorage.getItem(LS_HISTORY) || '[]'); } catch (e) { return []; }
