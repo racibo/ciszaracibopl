@@ -701,6 +701,18 @@
         let txt = `Największym źródłem hałasu jest oddalona o ${dM} m ${grp}${nm}. To droga ${intensity}; poza osłoną budynkową generuje ok. ${lvl} dB – ${dbAnalogy(lvl)}. Hałas może przeszkadzać przy otwartych oknach, szczególnie w godzinach szczytu.`;
         const others = sources.length - 1;
         if (others > 0) txt += ` W pobliżu są też inne szlaki (${others}), które łącznie podnoszą tło hałasu.`;
+        // Który czynnik najbardziej redukuje to źródło (wyliczone z tłumień energetycznych)
+        const dB = v => (v > 0 ? -10 * Math.log10(1 - v / 100) : 0);
+        const dDist = dB(d.redDist), dBud = d.building_note || 0, dTer = dB(d.redTer);
+        const redList = [['odległość', dDist], ['budynek i zieleń', dBud], ['ukształtowanie terenu (wał)', dTer]]
+            .filter(x => x[1] > 0.2).sort((a, b) => b[1] - a[1]);
+        if (redList.length) {
+            const top = redList[0];
+            txt += ` Najskuteczniej redukuje ten hałas ${top[0]} – o ok. ${Math.round(top[1])} dB` +
+                (redList.length > 1
+                    ? ` (pozostałe: ${redList.slice(1).map(r => `${r[0]} −${Math.round(r[1])} dB`).join(', ')}).`
+                    : '.');
+        }
         return txt;
     }
 
@@ -1424,6 +1436,7 @@
             name: s.label, type: GROUP_TYPE[s.group], category: GROUP_LABEL[s.group],
             key: s.uid,
             distance_m: Math.round(s.dist),
+            level: isFinite(s.level) ? Math.round(s.level) : null,
             base_pct: s.basePct,
             red_dist: s.redDist,
             red_bud: s.redBud,
@@ -1561,14 +1574,24 @@
     function eduInterpretation(level) {
         if (level == null) return 'Kliknij punkt na mapie, aby zobaczyć interpretację wyniku.';
         const lvlTxt = `<b>${level} dB</b> – ${dbAnalogy(level)}`;
-        let health;
-        if (level < 40) health = 'To bardzo cicho, poniżej dopuszczalnej normy hałasu w domu (40 dB w dzień, 30 dB w nocy). Idealne dla wypoczynku i snu.';
-        else if (level < 55) health = 'Poziom cichy, mieści się w normie mieszkaniowej. Długotrwale bezpieczny dla słuchu i snu.';
-        else if (level < 70) health = 'Umiarkowany szum (jak ruch na ulicy). Wciąż akceptowalny, ale powyżej 70 dB długotrwały hałas zaczyna szkodzić.';
-        else if (level < 85) health = 'Hałas szkodliwy przy wielogodzinnym przebywaniu – według norm pracy 85 dB to granica 8 h bezpiecznej ekspozycji. Warto zadbać o ciszę w nocy.';
-        else if (level < 100) health = 'Hałas niebezpieczny: grozi trwałym uszkodzeniem słuchu przy dłuższej ekspozycji (przy 100 dB bezpieczne tylko ~15 min). Konieczna ochrona na zewnątrz.';
-        else health = 'Bardzo niebezpieczny poziom – ochrona słuchu (zatyczki/słuchawki) jest niezbędna już przy krótkim przebywaniu.';
-        return `Twój punkt ma poziom ${lvlTxt}.<br>${health}`;
+        let harmful, health, time;
+        if (level < 40) { harmful = 'nie szkodzi'; health = 'To bardzo cicho, poniżej dopuszczalnej normy hałasu w domu (40 dB w dzień, 30 dB w nocy). Idealne dla wypoczynku i snu.'; time = 'przebywanie bezpieczne całą dobę.'; }
+        else if (level < 55) { harmful = 'nie szkodzi'; health = 'Poziom cichy, mieści się w normie mieszkaniowej.'; time = 'długotrwale bezpieczny dla słuchu i snu.'; }
+        else if (level < 70) { harmful = 'jeszcze nie szkodzi'; health = 'Umiarkowany szum (jak ruch na ulicy). Wciąż akceptowalny.'; time = 'powyżej 70 dB długotrwały hałas zaczyna szkodzić – warto dbać o ciszę w nocy.'; }
+        else if (level < 85) { harmful = 'szkodzi przy wielu godzinach'; health = 'Hałas szkodliwy przy wielogodzinnym przebywaniu.'; time = 'Bezpieczna norma pracy to 85 dB przez 8 h; poniżej tego – kilka–kilkanaście godzin dziennie bez trwałego uszkodzenia.'; }
+        else if (level < 100) { harmful = 'wyraźnie szkodzi'; health = 'Hałas niebezpieczny: grozi trwałym uszkodzeniem słuchu.'; time = 'Według zależności NIOSH (–3 dB = 2× czasu): przy 85 dB bezpieczne 8 h, przy 100 dB tylko ok. 15 min dziennie.'; }
+        else { harmful = 'bardzo szkodzi'; health = 'Bardzo niebezpieczny poziom.'; time = 'Ochrona słuchu (zatyczki/słuchawki) niezbędna już przy kilkunastu minutach ekspozycji.'; }
+        const safe = safeExposureHours(level);
+        const timeTxt = safe >= 1
+            ? `Bezpieczny czas przebywania: ok. <b>${Math.round(safe)} h</b> dziennie.`
+            : `Bezpieczny czas przebywania: tylko ok. <b>${Math.max(1, Math.round(safe * 60))} min</b> dziennie.`;
+        return `Twój punkt ma poziom ${lvlTxt}.<br>` +
+            `Czy szkodzi zdrowiu: <b>${harmful}</b>.<br>${health}<br>${timeTxt} ${time}`;
+    }
+    // Przybliżony bezpieczny czas ekspozycji (h/dobę) wg zależności NIOSH: 85 dB → 8 h, –3 dB podwaja czas
+    function safeExposureHours(level) {
+        if (level >= 115) return 0.15;
+        return 8 * Math.pow(2, (85 - level) / 3);
     }
 
     function render(d) {
@@ -1633,7 +1656,7 @@
             const tlm = `${redCell(s.red_dist)} ${budCell} ${redCell(s.red_ter)}`;
             tr.innerHTML =
                 `<td class="name"><b style="cursor:pointer;color:#21618c;text-decoration:underline;" onclick="focusCone('${s.key}')" title="Pokaż na mapie">${s.name}</b>${periodicBadge}<br><span style="font-size:0.74em;color:#7f8c8d;">${s.type} · ${s.distance_m} m${dirTxt} · ${cone}</span></td>` +
-                `<td class="db">${s.level} dB</td>` +
+                `<td class="db">${s.level != null ? s.level + ' dB' : '—'}</td>` +
                 `<td class="red">${tlm}</td>` +
                 `<td class="wk" style="color:${burdenColor};">${s.final_pct}/100</td>`;
             tb.appendChild(tr);

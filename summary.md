@@ -160,4 +160,15 @@ https://www.openstreetmap.org/ czy droga istnieje; w razie potrzeby przebuduj ka
   markery w **ciągłym gradientzie HSL** (niski wynik=zieleń → wysoki=czerwień), `scoreColor`
   przerobione na `hsl((1-score/100)*120,65%,45%)`. Usunięto martwy `roseLayer`.
 
+## Poprawki (commit po 7ce1c91)
+- **BŁĄD: kolumna „Poziom" pokazywała `undefined dB`** — obiekty tabeli (`d.sources`/`top`)
+  nie kopiowały pola `level` z surowych źródeł. Dodano `level: isFinite(s.level)?Math.round(s.level):null`
+  do mapowania `top`; w tabeli `s.level != null ? s.level+' dB' : '—'`. `s.level` = poziom po
+  redukcji odległości (czyli to, czego dotyczą nitki pajęczyny).
+- **Panel „Co oznacza Twój wynik"**: `eduInterpretation(level)` podaje czy szkodzi zdrowiu,
+  oraz **bezpieczny czas przebywania** (`safeExposureHours` wg NIOSH: 85 dB→8 h, –3 dB = 2× czasu).
+- **Rozbicie osłon w opisie**: `buildAssessment` wylicza z tłumień energetycznych, który czynnik
+  najbardziej redukuje dominantę (odległość / budynek i zieleń / ukształtowanie terenu) i podaje
+  to w dB (np. „Najskuteczniej redukuje ten hałas odległość – o ok. 3 dB…").
+
 
