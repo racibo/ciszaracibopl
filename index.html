@@ -1091,7 +1091,18 @@
             });
         }
         const sources = raw;
-        console.table(sources.map(s => ({ name: s.label, group: s.group, dist: Math.round(s.dist), energy: s.energy.toFixed(1), uid: s.uid })));
+        console.table(sources.map(s => ({
+            name: s.name || s.label,
+            group: s.group,
+            dist: Math.round(s.dist),
+            energy: +s.energy.toFixed(1),
+            closestLat: s.closest ? s.closest[0].toFixed(6) : null,
+            closestLon: s.closest ? s.closest[1].toFixed(6) : null,
+            dir: s.closest ? Math.round(bearingDeg(p, s.closest)) : null,
+            level: Math.round(s.level),
+            screenFrac: s.screenFrac != null ? +(s.screenFrac * 100).toFixed(0) : null,
+            uid: s.uid
+        })));
 
         // --- Ukształtowanie terenu (wał) ---
         let terrainNote = 'Ukształtowanie terenu nie zostało uwzględnione.';
