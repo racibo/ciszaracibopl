@@ -72,10 +72,22 @@ Dodano `console.table(sources.map(...))` do diagnostyki bez zgadywania.
 Efekt: tramwaj rozdziela się na fizyczne odcinki; dominujące źródło to realnie najbliższe/
 najgłośniejsze; kliknięcie w tabeli przybliża właściwy stożek.
 
-## Droga krajowa (hipoteza #5 — wciąż otwarta)
-Podobno bliski odcinek (54.405730, 18.570462) nie ma tego samego `name=` co daleki
-(54.406643, 18.569947). To kwestia danych w kafelku Geofabrik, nie logiki. Sprawdź na
-openstreetmap.org i ew. przebuduj `cache.yml` (workflow_dispatch).
+## Droga krajowa (hipoteza #5 — WERYFIKOWANA: brak błędu)
+Offline-parsing `tiles/8_5.json` (cache Geofabrik) dla domu (54.405150, 18.567941):
+Aleja Grunwaldzka (`highway=primary`) przebiega na **NE (azymut 28-46°), 195-237 m** od
+domu (way 277203727: 195 m/45°, 277203730: 215 m/46°, 61804798: 237 m/28°, 978107667: 218 m/34°).
+**NIE MA jej w azymucie 75°/170 m.** Skan źródeł z domu (55-95°/250 m) pokazał tylko
+`Droga lokalna` (45-114 m: src38, src28, src30, src11, src50, src41, src27) + boisko 103 m.
+→ Tabela `185 m · NE (40°)` jest **POPRAWNA**; użytkownik pomylił kierunek (E zamiast NE)
+i drogę (lokalna zamiast krajowa). Żaden błąd kodu/da­nych. `przesłonięte: 94%` to średnia
+źródła, nie punktu `closest`. Jeśli droga na E to wg użytkownika Grunwaldzka — do sprawdzenia
+tag `highway=` na openstreetmap.org (jeśli `residential`→`lokalna` jest OK).
+
+## Diagnostyka (narzędzia)
+- `window.__lastSources` / `window.__lastPoint` — inspekcja w konsoli po kliknięciu.
+- Skrypt skanujący źródła w paśmie azymutu/odległości od domu (wykrywa brakujące fragmenty).
+- Cache offline: `tiles/<gx>_<gy>.json`, `gx=round((lon-18.40)/0.02)`, `gy=round((lat-54.30)/0.02)`.
+
 
 ## Jak zweryfikować (punkt 54.405730, 18.570462)
 Po wdrożeniu (kilka minut na GitHub Pages) kliknij w ten punkt. Bliska dwupasmówka powinna
