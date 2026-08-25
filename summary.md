@@ -83,7 +83,23 @@ i drogę (lokalna zamiast krajowa). Żaden błąd kodu/da­nych. `przesłonięte
 źródła, nie punktu `closest`. Jeśli droga na E to wg użytkownika Grunwaldzka — do sprawdzenia
 tag `highway=` na openstreetmap.org (jeśli `residential`→`lokalna` jest OK).
 
-## Diagnostyka (narzędzia)
+## BŁĄD KRYTYCZNE: obcięcie danych na granicy kafelka (commit 2fce91f)
+**Objaw:** Grunwaldzka w azymucie 90°/167 m (droga wojewódzka, 4 pasy) nie pojawiała się;
+tabela pokazywała ją tylko na NE/194 m. Użytkownik słusznie podejrzewał, że "linia zatrzymuje
+się na lokalnej drodze i nie idzie dalej".
+**Przyczyna:** `fetchWays`/`fetchBuildings`/`fetchPOI` ładowały **tylko jeden kafelek**
+(`loadStaticTile(lat,lon)` → `tiles/<gx>_<gy>.json` punktu). Dom w komórce 8_5, ale
+wschodnia część Grunwaldzkiej (way 430542807, az 62-82°/167-205 m) leży w komórce **9_5**
+(punkt 18.5706 → gx=9). Kafelek 9_5 zawiera ten way (sprawdzone offline), ale 8_5 nie →
+droga w sąsiedniej komórce (mimo 167 m od domu!) znikała z analizy.
+**Naprawa:** `loadStaticTileBlock(lat,lon,radius)` ładuje blok komórek pokrywający `radius`
+(±2 lon / ±1 lat dla 2000 m), scala z **deduplikacją po id** (way może być w kilku
+komórkach → bez dedupe podwójna energia). `fetchWays`/`fetchBuildings`/`fetchPOI` używają
+bloku. Dla poza Trójmiastem (center=null) → fallback do live Overpass (bez zmian).
+**Weryfikacja:** kliknij dom → w konsoli `window.__lastSources` powinno zawierać Grunwaldzką
+z `closest` w azymucie ~75-82°/~170 m (droga wojewódzka, głośniejsza od lokalnej 60 m).
+
+
 - `window.__lastSources` / `window.__lastPoint` — inspekcja w konsoli po kliknięciu.
 - Skrypt skanujący źródła w paśmie azymutu/odległości od domu (wykrywa brakujące fragmenty).
 - Cache offline: `tiles/<gx>_<gy>.json`, `gx=round((lon-18.40)/0.02)`, `gy=round((lat-54.30)/0.02)`.
