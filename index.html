@@ -444,15 +444,20 @@
     function aggregateLine(p, geom, base, polys, att, radius) {
         const segs = segmentizeVis(p, geom, polys, radius);
         let energy = 0, energyUnblocked = 0, distMin = Infinity, closest = null;
+        let bestSegEnergy = -Infinity, closestDist = null;
         const LwSeg = base + 10 * Math.log10(SEG_STEP); // moc 20-metrowego odcinka
         for (const sg of segs) {
             const free = LwSeg - 20 * Math.log10(Math.max(sg.d, 1)) - 11;
             const att_i = (1 - sg.vis) * att;          // tłumienie proporcjonalne do zasłonięcia
-            energy += Math.pow(10, (free - att_i) / 10);
+            const segEnergy = Math.pow(10, (free - att_i) / 10);
+            energy += segEnergy;
             energyUnblocked += Math.pow(10, free / 10);
-            if (sg.d < distMin) { distMin = sg.d; closest = sg.mid; }
+            if (sg.d < distMin) distMin = sg.d;
+            // Punkt reprezentatywny = ten, który realnie najbardziej dokłada się do hałasu,
+            // a nie najbliższy geometrycznie (może być wyciszony zabudową).
+            if (segEnergy > bestSegEnergy) { bestSegEnergy = segEnergy; closest = sg.mid; closestDist = sg.d; }
         }
-        return { energy, energyUnblocked, distMin, closest, segs };
+        return { energy, energyUnblocked, distMin, closest, closestDist, bestSegEnergy, segs };
     }
 
     // ---------------- Geometria pomocnicza ----------------
@@ -1015,7 +1020,7 @@
             if (!acc) {
                 acc = {
                     name: c.name, label: c.label, kind: c.kind, group: c.group, weight: c.weight, base: c.base,
-                    energy: 0, energyUnblocked: 0, distMin: Infinity, closest: null,
+                    energy: 0, energyUnblocked: 0, distMin: Infinity, closest: null, bestSegEnergy: -Infinity,
                     ways: [], segs: []
                 };
                 accByKey.set(key, acc);
@@ -1024,7 +1029,13 @@
             acc.energyUnblocked += c.weight * agg.energyUnblocked;
             acc.ways.push(c.geom);
             if (agg.segs.length) acc.segs.push(...agg.segs);
-            if (agg.distMin < acc.distMin) { acc.distMin = agg.distMin; acc.closest = agg.closest; }
+            // Punkt reprezentatywny źródła = najgłośniejszy realnie pod-segment (max energii),
+            // a nie najbliższy geometrycznie. distMin (raportowane) = dystans do tego punktu.
+            if (agg.bestSegEnergy > (acc.bestSegEnergy ?? -Infinity)) {
+                acc.bestSegEnergy = agg.bestSegEnergy;
+                acc.closest = agg.closest;
+                acc.distMin = agg.closestDist;
+            }
         }
 
         // --- Pobierz punktowe źródła (szkoły, boiska, gastronomia, usługi) ---
