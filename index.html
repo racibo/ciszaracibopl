@@ -22,7 +22,7 @@
         #map { flex-grow: 1; height: 100%; }
 
         h1 { font-size: 1.35em; margin: 0 0 4px 0; }
-        .sub { font-size: 0.82em; color: #7f8c8d; margin: 0 0 14px 0; }
+        .sub { font-size: 0.82em; color: #566573; margin: 0 0 14px 0; }
 
         .search-box { display: flex; gap: 8px; margin-bottom: 6px; }
         .search-box input {
@@ -54,7 +54,7 @@
         .set-row .val { font-size: 0.8em; width: 32px; text-align: right; color: #16a085; font-weight: 600; }
         .check-row { font-size: 0.85em; margin-top: 8px; }
 
-        #loader { display: none; text-align: center; margin: 12px 0; color: #7f8c8d; font-size: 0.9em; }
+        #loader { display: none; text-align: center; margin: 12px 0; color: #566573; font-size: 0.9em; }
 
         #result { display: none; }
         .score-wrap { text-align: center; margin: 6px 0 8px; }
@@ -83,7 +83,7 @@
         th, td { text-align: left; padding: 4px 3px; border-bottom: 1px solid #eee; overflow: hidden; }
         th:nth-child(1) { width: 34%; }
         th:nth-child(n+2) { width: 13.2%; }
-        th { color: #7f8c8d; font-weight: 600; }
+        th { color: #566573; font-weight: 600; }
         .pill { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 0.78em; }
         .pill.red { background: #fdecea; color: #c0392b; }
         .pill.green { background: #eafaf1; color: #1e8449; }
@@ -93,7 +93,7 @@
             margin-top: 10px; line-height: 1.4;
         }
         .err { color: #c0392b; font-size: 0.85em; }
-        .small { font-size: 0.72em; color: #95a5a6; margin-top: 10px; line-height: 1.4; }
+        .small { font-size: 0.78em; color: #3f4a56; margin-top: 10px; line-height: 1.55; }
         .edu { font-size: 0.9em; margin-top: 14px; line-height: 1.55; color: #374151;
             background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 10px; }
         .edu summary { cursor: pointer; font-weight: 600; color: #1f2937; }
@@ -101,7 +101,7 @@
         .edu-h { font-weight: 600; margin-bottom: 2px; }
         .edu-list { margin: 4px 0 4px 18px; padding: 0; }
         .edu-list li { margin: 2px 0; }
-        .edu-note { font-size: 0.85em; color: #9ca3af; font-style: italic; }
+        .edu-note { font-size: 0.85em; color: #6b7280; font-style: italic; }
 
         .thread-toggle { font-size: 0.82em; margin: 6px 0 2px; }
         .pill.periodic { background: #fef9e7; color: #b7950b; }
@@ -111,7 +111,7 @@
         #srcTable td { padding: 6px; border-bottom: 1px solid #eceff1; vertical-align: top; }
         #srcTable td.name { font-weight: 800; }
         #srcTable td.db { font-weight: 800; font-size: 1.05em; white-space: nowrap; }
-        #srcTable td.red { font-size: 0.82em; color: #7f8c8d; }
+        #srcTable td.red { font-size: 0.82em; color: #566573; }
         #srcTable td.wk { font-weight: 800; text-align: right; white-space: nowrap; }
         .edu-result { background: #fff; border: 1px solid #e2e8f0; border-left: 4px solid #2980b9;
             border-radius: 6px; padding: 8px 10px; font-size: 0.88em; line-height: 1.5; }
@@ -156,7 +156,7 @@
 
             <div class="thread-toggle">
                 <input type="checkbox" id="showThreads" checked>
-                <label for="showThreads">Pokaż nitki źródeł (pajęczyna) na mapie</label>
+                <label for="showThreads">Pokaż pajęczynę hałasu (kolor = poziom z kierunku)</label>
             </div>
         </details>
 
@@ -194,7 +194,7 @@
                 i sprawdzamy, jaki % jego powierzchni zajmują budynki (ekran akustyczny) – widoczne też na mapie.
                 Hałas końcowy = bazowy × (1−tłumienie odległości) × (1−tłumienie przeszkód).
             </div>
-            <div class="small" style="margin-top:4px;color:#7f8c8d;">
+            <div class="small" style="margin-top:4px;color:#566573;">
                 „Poziom" każdego źródła to jego własny hałas po redukcjach (odległość, budynki, teren).
                 Wynik końcowy sumuje <b>wszystkie</b> źródła + tło (30 dB) według wzoru logarytmicznego,
                 dlatego jest zawsze wyższy niż pojedyncze źródło – tak działa akustyka.
@@ -1351,12 +1351,11 @@
                 .slice(0, 25);
             for (const s of drawList) {
                 const key = s.uid;
-                const baseCol = s.screenFrac > 0.4 ? '#1e8449' : s.screenFrac > 0.15 ? '#e67e22' : '#c0392b';
                 const grp = L.featureGroup().addTo(coneLayer);
-                // cienka linia przebiegu każdego way-a (tooltips + orientacja)
+                // cienka szara linia przebiegu każdego way-a (tylko orientacja)
                 const ways = Array.isArray(s.geom[0]) && Array.isArray(s.geom[0][0]) ? s.geom : [s.geom];
                 ways.forEach((w, wi) => {
-                    const pl = L.polyline(w, { color: baseCol, weight: 2, opacity: 0.5 });
+                    const pl = L.polyline(w, { color: '#aab0b6', weight: 2, opacity: 0.5 });
                     if (wi === 0) pl.bindTooltip(`${s.label}: przesłonięte budynkami ${(s.screenFrac * 100).toFixed(0)}%`);
                     pl.addTo(grp);
                 });
@@ -1366,8 +1365,8 @@
                     for (let i = 0; i < s.segs.length; i += step) {
                         const sg = s.segs[i];
                         if (sg.d > ANALYSIS_R) continue;
-                        // vis wysokie = widoczny = słychać = CZERWONY; niskie = przesłonięty = ZIELONY
-                        const c = sg.vis > 0.66 ? '#c0392b' : sg.vis > 0.33 ? '#e67e22' : '#1e8449';
+                        // ulice pozostają neutralne (szare) – kolor hałasu niosą promienie pajęczyny
+                        const c = '#aab0b6';
                         L.polyline([sg.a, sg.b], { color: c, weight: 3, opacity: 0.55 }).addTo(grp);
                     }
                 }
@@ -1466,30 +1465,36 @@
             dir: s.closest ? Math.round(bearingDeg(p, s.closest)) : null
         }));
 
-        // --- Pajęczyna: nitki od punktu do każdego istotnego źródła (kolor = dB) ---
+        // --- Pajęczyna: promienie we wszystkich kierunkach, kolor = poziom hałasu
+        //     z danego kierunku (czerwony = najgłośniej, zielony = najciszej) ---
         threadLayer.clearLayers();
-        if (document.getElementById('showThreads').checked) {
-            // Nitki: bliskie źródła pokazujemy zawsze (nawet krótkie), dalsze tylko
-            // gdy ich całkowity poziom przekracza tło. Unikamy znikania odsłoniętych
-            // odcinków tuż przy punkcie.
+        if (document.getElementById('showThreads').checked && sectors && sectorLevels) {
+            const lat0 = lat, lng0 = lng;
+            const mLat = 111320, mLon = 111320 * Math.cos(lat0 * Math.PI / 180);
+            const R0 = 90, R1 = 430;
+            for (let i = 0; i < SECTORS; i++) {
+                const lvl = sectorLevels[i];
+                if (!isFinite(lvl) || lvl <= 0) continue;
+                const t = Math.max(0, Math.min(1, (lvl - 30) / (75 - 30)));
+                const len = R0 + t * (R1 - R0);
+                const brg = sectors[i].dir * Math.PI / 180;
+                const end = [lat0 + Math.cos(brg) * len / mLat,
+                             lng0 + Math.sin(brg) * len / mLon];
+                L.polyline([[lat0, lng0], end], {
+                    color: levelColor(lvl), weight: 3, opacity: 0.85
+                }).addTo(threadLayer);
+            }
+            // cienkie szare połączenia do konkretnych źródeł (tylko do orientacji)
             const tlist = sources
-                .filter(s => s.closest && isFinite(s.level) && s.dist <= ANALYSIS_R && (s.level > 30 || s.dist <= 400))
+                .filter(s => s.closest && isFinite(s.level) && s.dist <= ANALYSIS_R)
                 .sort((a, b) => b.energy - a.energy)
-                .slice(0, 60);
-            const maxE = tlist.length ? tlist[0].energy : 0;
+                .slice(0, 40);
             for (const s of tlist) {
-                // Nitki kolorowane na skali zielona→czerwona wg SKUTECZNEGO poziomu hałasu
-                // (po redukcjach: odległość + budynki + teren) – widać z którego kierunku
-                // dochodzi najgroźniejsze źródło. Największe (dominujące) dodatkowo pogrubione.
-                const loud = s.energy >= 0.4 * maxE;
-                const el = s.level + 10 * Math.log10(s.terrainFactor || 1);
-                const col = levelColor(el);
-                const pl = L.polyline([[lat, lng], s.closest], {
-                    color: col, weight: loud ? 4 : 1.5, opacity: loud ? 0.95 : 0.5,
-                    dashArray: loud ? null : '4 4'
+                const dirTxt = compass(bearingDeg([lat0, lng0], s.closest));
+                const pl = L.polyline([[lat0, lng0], s.closest], {
+                    color: '#8a9099', weight: 1, opacity: 0.35, dashArray: '3 3'
                 });
-                const dirTxt = s.closest ? compass(bearingDeg([lat, lng], s.closest)) : '';
-                pl.bindTooltip(`${s.label} · ${Math.round(el)} dB · ${Math.round(s.dist)} m · kier. ${dirTxt}` +
+                pl.bindTooltip(`${s.label} · ${Math.round(s.level + 10 * Math.log10(s.terrainFactor || 1))} dB · ${Math.round(s.dist)} m · kier. ${dirTxt}` +
                     (s.periodic ? ' · 🌬️ okresowo' : ''));
                 pl.addTo(threadLayer);
             }
@@ -1666,7 +1671,7 @@
             const burdenColor = s.final_pct >= 70 ? '#c0392b'
                 : s.final_pct >= 40 ? '#e67e22' : '#27ae60';
             const cone = s.screen_pct != null
-                ? `<span style="font-size:0.74em;color:#7f8c8d;">przesłonięte: ${s.screen_pct}%</span>`
+                ? `<span style="font-size:0.74em;color:#566573;">przesłonięte: ${s.screen_pct}%</span>`
                 : '';
             const periodicBadge = s.periodic ? ` <span class="pill periodic">🌬️ okresowo</span>` : '';
             const dirTxt = (s.dir != null) ? ` · ${compass(s.dir)} (${s.dir}°)` : '';
@@ -1674,14 +1679,14 @@
                 (s.building_reduction_db ? ` <span class="pill green">−${s.building_reduction_db} dB</span>` : '');
             const tlm = `${redCell(s.red_dist)} ${budCell} ${redCell(s.red_ter)}`;
             tr.innerHTML =
-                `<td class="name"><b style="cursor:pointer;color:#21618c;text-decoration:underline;" onclick="focusCone('${s.key}')" title="Pokaż na mapie">${s.name}</b>${periodicBadge}<br><span style="font-size:0.74em;color:#7f8c8d;">${s.type} · ${s.distance_m} m${dirTxt} · ${cone}</span></td>` +
+                `<td class="name"><b style="cursor:pointer;color:#21618c;text-decoration:underline;" onclick="focusCone('${s.key}')" title="Pokaż na mapie">${s.name}</b>${periodicBadge}<br><span style="font-size:0.74em;color:#566573;">${s.type} · ${s.distance_m} m${dirTxt} · ${cone}</span></td>` +
                 `<td class="db">${s.eff_level != null ? s.eff_level + ' dB' : '—'}</td>` +
                 `<td class="red">${tlm}</td>` +
                 `<td class="wk" style="color:${burdenColor};">${s.final_pct}/100</td>`;
             tb.appendChild(tr);
         });
         if (!d.sources.length)
-            tb.innerHTML = '<tr><td colspan="4" style="color:#7f8c8d;">Brak szlaków w zasięgu.</td></tr>';
+            tb.innerHTML = '<tr><td colspan="4" style="color:#566573;">Brak szlaków w zasięgu.</td></tr>';
     }
 
     // ---------------- Mapa ----------------
@@ -1724,7 +1729,7 @@
                 fillColor: col, fillOpacity: 0.8
             });
             m.bindPopup(`<b>Wynik: ${p.score}/100</b> · ${p.level} dB<br>` +
-                `<span style="font-size:0.8em;color:#7f8c8d;">${new Date(p.t).toLocaleString('pl-PL')}</span>`);
+                `<span style="font-size:0.8em;color:#566573;">${new Date(p.t).toLocaleString('pl-PL')}</span>`);
             m.addTo(historyLayer);
         }
     }
