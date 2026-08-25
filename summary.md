@@ -4,11 +4,29 @@ Aplikacja: **https://racibo.github.io/ciszaracibopl/** (GitHub Pages z brancha `
 Lokalnie: `python app.py` → http://localhost:5000 (serwuje `index.html` + `tiles/`).
 
 ## Cel
-Mapa hałasu wokół dowolnego punktu w Polsce (Trójmiasto ma statyczny cache, reszta Polski
-przez live Overpass). Model: dyskretyzacja dróg/torów na odcinki 20 m, 48 promieni (co 7,5°),
-rozszerzenie `1/r²` (geometryczne), osłona budynkowa (ray-casting), osłona terenu (wał/ekskarpata
-z OSM `man_made=embankment`), lokalny `terrain_slope_m` ze STACJA.txt. Wynik: Lden w dB, z
-rozbiciem na drogi/kolej/teren, plus tabela i mapa wkładu każdego źródła.
+Mapa hałasu wokół dowolnego punktu w Polsce. **Poza wybranymi obszarami (REGIONS) działa przez
+live Overpass**, ale gdy Overpass jest niedostępny, analiza pada. Dlatego kluczowe miejsca mają
+**statyczny cache** (`tiles/<gx>_<gy>.json` z Geofabriek, BEZ Overpassa) i działają w 100% offline.
+Model: dyskretyzacja dróg/torów na odcinki 20 m, 48 promieni (co 7,5°), rozszerzenie `1/r²`
+(geometryczne), osłona budynkowa (ray-casting), osłona terenu (wał/ekskarpata z OSM
+`man_made=embankment`), lokalny `terrain_slope_m` ze STACJA.txt. Wynik: Lden w dB, z rozbiciem
+na drogi/kolej/teren, plus tabela i mapa wkładu każdego źródła.
+
+## Statyczny cache (offline poza Trójmiastem) — architektura
+- `scripts/build-cache-geofabrik.py` czyta extract(y) Geofabriek (`GEOFABRIK_PBFS`, `:`-lista)
+  i dzieli wybrane obszary (`REGIONS`: nazwa + bbox) na kafelki siatki `CELL=0.02°` (~2,2 km)
+  wokół origin `(54.30, 18.40)` — **te same stałe co `STATIC_ORIGIN_*`/`STATIC_CELL` w index.html!**
+- **UWAGA: link `poland-latest.osm.pbf` jest zepsuty** (302→strona główna). Używamy extractów
+  wojewódzkich: `pomorskie`, `warminsko-mazurskie`, `kujawsko-pomorskie` (działają, 302→dated).
+- `.github/workflows/cache.yml`: pobiera 3 extracty wojewódzkie i woła skrypt; `git-auto-commit`
+  zapisuje `tiles/*` + `tiles/manifest.json`. Trigger: cron miesięczny + `workflow_dispatch`.
+- `index.html`: `fetchWays/fetchBuildings/fetchPOI` najpierw wołają `loadStaticTileBlock`;
+  gdy kafelek istnieje (punkt w `man.regions`), zwracają dane statyczne i **nie uderzają do
+  Overpassa**. `loadStaticTile` sprawdza pokrycie względem `man.regions` (lista bbox-ów).
+- **Dodanie nowego miejsca:** dopisać `(nazwa, latMin,latMax,lonMin,lonMax)` do `REGIONS` w
+  `build-cache-geofabrik.py`, odpalić `gh workflow run cache.yml` → po ~10–20 min kafelki
+  są w repo i miejsce działa offline. Przykład dodanych: Biskupiec, Ciechocinek,
+  Aleksandrów Kujawski, Krutyń.
 
 ## Kluczowe funkcje (index.html)
 - `fetchWays(lat,lng,radius,group)` — dla Trójmiasto czyta `tiles/...json` (Geofabrik, monthly
