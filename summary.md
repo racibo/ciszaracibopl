@@ -171,4 +171,17 @@ https://www.openstreetmap.org/ czy droga istnieje; w razie potrzeby przebuduj ka
   najbardziej redukuje dominantę (odległość / budynek i zieleń / ukształtowanie terenu) i podaje
   to w dB (np. „Najskuteczniej redukuje ten hałas odległość – o ok. 3 dB…").
 
+## Poprawki (commit po 885f219)
+- **Wyjaśnienie dlaczego źródła w tabeli mają niższy poziom niż wynik końcowy**: dodano
+  stopkę pod tabelą – „Poziom" to własny hałas źródła po redukcjach; wynik końcowy sumuje
+  WSZYSTKIE źródła + tło (30 dB) logarytmicznie, więc jest zawsze wyższy (poprawna akustyka).
+- **Kolumna „Poziom" = efektywny poziom** `eff_level = s.level + 10·log10(terrainFactor)`
+  (po odległości + budynkach + terenie), zgodny z tym, jak liczony jest wynik końcowy.
+- **Nitki pajęczyny kolorowane wg efektywnego poziomu** (`levelColor(s.level+10·log10(terrainFactor))`),
+  nie surowego `s.level` – najgroźniejsze źródło (po redukcjach) jest najbardziej czerwone;
+  tooltip też pokazuje efektywny dB.
+- **Opis dopasowany do poziomu**: `buildAssessment` nie pisze „hałas może przeszkadzać" dla
+  cichego źródła (<45 dB); tekst zależy od efektywnego dB (nieodczuwalny / lekko słychać /
+  przeszkadza). Usunięto mylące „poza osłoną budynkową".
+
 

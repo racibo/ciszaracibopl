@@ -194,6 +194,11 @@
                 i sprawdzamy, jaki % jego powierzchni zajmują budynki (ekran akustyczny) – widoczne też na mapie.
                 Hałas końcowy = bazowy × (1−tłumienie odległości) × (1−tłumienie przeszkód).
             </div>
+            <div class="small" style="margin-top:4px;color:#7f8c8d;">
+                „Poziom" każdego źródła to jego własny hałas po redukcjach (odległość, budynki, teren).
+                Wynik końcowy sumuje <b>wszystkie</b> źródła + tło (30 dB) według wzoru logarytmicznego,
+                dlatego jest zawsze wyższy niż pojedyncze źródło – tak działa akustyka.
+            </div>
         </div>
 
         <div class="small">
@@ -697,8 +702,14 @@
         else if (d.group === 'krajowa') intensity = 'o znacznym natężeniu ruchu';
         else if (d.group === 'wojew') intensity = 'o umiarkowanym ruchu';
         else intensity = 'o niewielkim ruchu';
-        const lvl = Math.round(d.level);
-        let txt = `Największym źródłem hałasu jest oddalona o ${dM} m ${grp}${nm}. To droga ${intensity}; poza osłoną budynkową generuje ok. ${lvl} dB – ${dbAnalogy(lvl)}. Hałas może przeszkadzać przy otwartych oknach, szczególnie w godzinach szczytu.`;
+        const lvl = Math.round(d.level + 10 * Math.log10(d.terrainFactor || 1));
+        let impact;
+        if (lvl < 35) impact = 'To bardzo cicha okolica – hałas tego źródła jest praktycznie nieodczuwalny.';
+        else if (lvl < 45) impact = 'To spokojne miejsce; to źródło słychać tylko przy całkowitej ciszy na zewnątrz.';
+        else if (lvl < 55) impact = 'Umiarkowany szum; przy otwartych oknach w szczycie może być lekko słychać.';
+        else if (lvl < 65) impact = 'Wyraźny szum; przy otwartych oknach może przeszkadzać, szczególnie w szczycie.';
+        else impact = 'Silny hałas; przeszkadza przy otwartych oknach, szczególnie w godzinach szczytu.';
+        let txt = `Największym źródłem hałasu jest oddalona o ${dM} m ${grp}${nm}. To droga ${intensity}; w Twoim punkcie wnosi ok. ${lvl} dB – ${dbAnalogy(lvl)}. ${impact}`;
         const others = sources.length - 1;
         if (others > 0) txt += ` W pobliżu są też inne szlaki (${others}), które łącznie podnoszą tło hałasu.`;
         // Który czynnik najbardziej redukuje to źródło (wyliczone z tłumień energetycznych)
@@ -1437,6 +1448,7 @@
             key: s.uid,
             distance_m: Math.round(s.dist),
             level: isFinite(s.level) ? Math.round(s.level) : null,
+            eff_level: isFinite(s.level) ? Math.round(s.level + 10 * Math.log10(s.terrainFactor || 1)) : null,
             base_pct: s.basePct,
             red_dist: s.redDist,
             red_bud: s.redBud,
@@ -1461,16 +1473,18 @@
                 .slice(0, 60);
             const maxE = tlist.length ? tlist[0].energy : 0;
             for (const s of tlist) {
-                // Nitki kolorowane na skali zielona→czerwona wg poziomu hałasu;
-                // najgłośniejsze (dominujące) dodatkowo pogrubione dla czytelności.
+                // Nitki kolorowane na skali zielona→czerwona wg SKUTECZNEGO poziomu hałasu
+                // (po redukcjach: odległość + budynki + teren) – widać z którego kierunku
+                // dochodzi najgroźniejsze źródło. Największe (dominujące) dodatkowo pogrubione.
                 const loud = s.energy >= 0.4 * maxE;
-                const col = levelColor(s.level);
+                const el = s.level + 10 * Math.log10(s.terrainFactor || 1);
+                const col = levelColor(el);
                 const pl = L.polyline([[lat, lng], s.closest], {
                     color: col, weight: loud ? 4 : 1.5, opacity: loud ? 0.95 : 0.5,
                     dashArray: loud ? null : '4 4'
                 });
                 const dirTxt = s.closest ? compass(bearingDeg([lat, lng], s.closest)) : '';
-                pl.bindTooltip(`${s.label} · ${Math.round(s.level)} dB · ${Math.round(s.dist)} m · kier. ${dirTxt}` +
+                pl.bindTooltip(`${s.label} · ${Math.round(el)} dB · ${Math.round(s.dist)} m · kier. ${dirTxt}` +
                     (s.periodic ? ' · 🌬️ okresowo' : ''));
                 pl.addTo(threadLayer);
             }
@@ -1656,7 +1670,7 @@
             const tlm = `${redCell(s.red_dist)} ${budCell} ${redCell(s.red_ter)}`;
             tr.innerHTML =
                 `<td class="name"><b style="cursor:pointer;color:#21618c;text-decoration:underline;" onclick="focusCone('${s.key}')" title="Pokaż na mapie">${s.name}</b>${periodicBadge}<br><span style="font-size:0.74em;color:#7f8c8d;">${s.type} · ${s.distance_m} m${dirTxt} · ${cone}</span></td>` +
-                `<td class="db">${s.level != null ? s.level + ' dB' : '—'}</td>` +
+                `<td class="db">${s.eff_level != null ? s.eff_level + ' dB' : '—'}</td>` +
                 `<td class="red">${tlm}</td>` +
                 `<td class="wk" style="color:${burdenColor};">${s.final_pct}/100</td>`;
             tb.appendChild(tr);
