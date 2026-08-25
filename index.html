@@ -308,8 +308,8 @@
         try { const o = JSON.parse(localStorage.getItem(LS_POI) || '{}'); for (const k in o) _poiCache.set(k, o[k]); } catch (e) {}
     })();
     async function fetchPOI(lat, lon, radius) {
-        const tile = await loadStaticTile(lat, lon);
-        if (tile && Array.isArray(tile.poi) && tile.poi.length) return tile.poi;
+        const block = await loadStaticTileBlock(lat, lon, radius);
+        if (block && Array.isArray(block.poi) && block.poi.length) return block.poi;
         const q = buildOverpassPOI(lat, lon, radius);
         const json = await opQuery(q);
         if (json && json.remark && (!json.elements || !json.elements.length)) return [];
@@ -788,9 +788,45 @@
         return tile;
     }
 
+    // Ładuje blok komórek pokrywający promień `radius` wokół punktu. Bez tego drogi
+    // (i zabudowa/POI) leżące w sąsiedniej komórce – mimo że blisko punktu, w zasięgu
+    // analizy – w ogóle nie były pobierane (bug: "linia nie dochodzi do hałasu").
+    // Wynik scalony z deduplikacją po id (way może wystąpić w kilku komórkach).
+    async function loadStaticTileBlock(lat, lon, radius) {
+        const center = await loadStaticTile(lat, lon);
+        if (!center) return null; // punkt poza obszarem kafelków → fallback do live
+        const gx0 = Math.round((lon - STATIC_ORIGIN_LON) / STATIC_CELL);
+        const gy0 = Math.round((lat - STATIC_ORIGIN_LAT) / STATIC_CELL);
+        const dLatM = STATIC_CELL * 111320;
+        const dLonM = STATIC_CELL * 111320 * Math.cos(lat * Math.PI / 180);
+        const nx = Math.max(1, Math.ceil(radius / dLonM));
+        const ny = Math.max(1, Math.ceil(radius / dLatM));
+        const waysById = new Map(), bById = new Map(), poiById = new Map();
+        const collect = (t) => {
+            for (const w of (t.ways || [])) if (!waysById.has(w.id)) waysById.set(w.id, w);
+            for (const b of (t.buildings || [])) if (!bById.has(b.id)) bById.set(b.id, b);
+            for (const p of (t.poi || [])) if (!poiById.has(p.id)) poiById.set(p.id, p);
+        };
+        collect(center);
+        const nb = [];
+        for (let ix = -nx; ix <= nx; ix++) {
+            for (let iy = -ny; iy <= ny; iy++) {
+                if (ix === 0 && iy === 0) continue;
+                nb.push(loadStaticTile(STATIC_ORIGIN_LAT + (gy0 + iy) * STATIC_CELL,
+                                       STATIC_ORIGIN_LON + (gx0 + ix) * STATIC_CELL));
+            }
+        }
+        for (const t of await Promise.all(nb)) if (t) collect(t);
+        return {
+            ways: [...waysById.values()],
+            buildings: [...bById.values()],
+            poi: [...poiById.values()]
+        };
+    }
+
     async function fetchWays(lat, lon, radius) {
-        const tile = await loadStaticTile(lat, lon);
-        if (tile && Array.isArray(tile.ways) && tile.ways.length) return tile.ways;
+        const block = await loadStaticTileBlock(lat, lon, radius);
+        if (block && Array.isArray(block.ways) && block.ways.length) return block.ways;
         const q = buildOverpass(lat, lon, radius);
         const json = await opQuery(q);
         if (json && json.remark && (!json.elements || !json.elements.length)) {
@@ -805,14 +841,18 @@
         if (_bCache.has(key) && _bCache.get(key).length) return _bCache.get(key);
         buildingFetchError = '';
         const { s, w, n, e } = bbox;
-        // Statyczny kafelek: zwróć zbuforowaną zabudowę, jeśli kafelek obejmuje punkt
+        // Statyczny kafelek: zwróć zbuforowaną zabudowę z bloku komórek (pokrywa bbox)
         const clat = (parseFloat(s) + parseFloat(n)) / 2;
         const clon = (parseFloat(w) + parseFloat(e)) / 2;
-        const tile = await loadStaticTile(clat, clon);
-        if (tile && Array.isArray(tile.buildings) && tile.buildings.length) {
-            _bCache.set(key, tile.buildings);
+        const radiusM = Math.hypot(
+            (parseFloat(n) - parseFloat(s)) * 111320 / 2,
+            (parseFloat(e) - parseFloat(w)) * 111320 * Math.cos(clat * Math.PI / 180) / 2
+        );
+        const block = await loadStaticTileBlock(clat, clon, radiusM);
+        if (block && Array.isArray(block.buildings) && block.buildings.length) {
+            _bCache.set(key, block.buildings);
             persistCache(_bCache, LS_BUILD);
-            return tile.buildings;
+            return block.buildings;
         }
         const q = `[out:json][timeout:25];(way["building"](${s},${w},${n},${e}););out geom;`;
         let els = [];
