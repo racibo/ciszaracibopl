@@ -1,12 +1,9 @@
-// Generator statycznych kafelków hałasu (cache JSON) dla aplikacji "W poszukiwaniu ciszy".
-// Uruchamiany przez GitHub Actions (raz w miesiącu) oraz ręcznie (workflow_dispatch).
+// Generator statycznych kafelków hałasu (cache JSON) – wersja z JEDNYM zapytaniem.
 //
-// Dla każdego węzła siatki (komórka STATIC_CELL stopni) pobiera z Overpassa:
-//   - drogi i tory (way["highway"] / way["railway"])  -> tile.ways
-//   - budynki (way["building"])                        -> tile.buildings
-//   - punktowe źródła (szkoły, boiska, gastronomia)    -> tile.poi
-// i zapisuje je do tiles/<gx>_<gy>.json. Przeglądarka (index.html) najpierw próbuje
-// wczytać taki kafelek, zanim uderzy do live Overpassa.
+// Pobiera cały obszar BBOX (Trójmiasto + margines) POJEDYNCZYM zapytaniem Overpass,
+// a potem dzieli elementy na kafelki siatki (komórka STATIC_CELL). Przeglądarka
+// najpierw czyta kafelek, zanim uderzy do live Overpassa – dzięki temu Trójmiasto
+// działa całkowicie offline (bez żadnego zapytania live).
 //
 // Uwaga: stałe STATIC_ORIGIN_* i STATIC_CELL MUSZĄ być zgodne z index.html!
 import { writeFile, mkdir } from 'node:fs/promises';
@@ -20,7 +17,7 @@ const TILES_DIR = join(ROOT, 'tiles');
 const STATIC_ORIGIN_LAT = 54.30;
 const STATIC_ORIGIN_LON = 18.40;
 const STATIC_CELL = 0.02;          // ~2.2 km
-const RADIUS = 2000;               // margines wokół komórki (pokrywa zasięg analizy do 2000 m)
+const RADIUS = 2000;               // margines (zgodny z index.html)
 const OVERPASS = 'https://overpass-api.de/api/interpreter';
 
 // Obszar: Trójmiasto + margines (Gdańsk–Gdynia–Sopot)
@@ -29,23 +26,23 @@ const BBOX = { latMin: 54.30, latMax: 54.62, lonMin: 18.38, lonMax: 18.82 };
 const HW = 'motorway|trunk|primary|secondary|tertiary|residential|unclassified|living_street|service|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link';
 const RW = 'rail|narrow_gauge|funicular|light_rail|tram|subway';
 
-function cellQuery(lat, lon) {
-  const a = `around:${RADIUS},${lat.toFixed(6)},${lon.toFixed(6)}`;
-  return `[out:json][timeout:60];(` +
-    `way["highway"~"${HW}"](${a});` +
-    `way["railway"~"${RW}"](${a});` +
-    `way["building"](${a});` +
-    `node["amenity"~"^(school|university|kindergarten)$"](${a});` +
-    `node["leisure"~"^(stadium|sports_centre|pitch|playground)$"](${a});` +
-    `node["amenity"~"^(restaurant|cafe|bar|pub|fast_food)$"](${a});` +
-    `node["shop"](${a});` +
-    `node["office"](${a});` +
+const bboxQ = `${BBOX.latMin},${BBOX.lonMin},${BBOX.latMax},${BBOX.lonMax}`;
+function query() {
+  return `[out:json][timeout:120];(` +
+    `way["highway"~"${HW}"](${bboxQ});` +
+    `way["railway"~"${RW}"](${bboxQ});` +
+    `way["building"](${bboxQ});` +
+    `node["amenity"~"^(school|university|kindergarten)$"](${bboxQ});` +
+    `node["leisure"~"^(stadium|sports_centre|pitch|playground)$"](${bboxQ});` +
+    `node["amenity"~"^(restaurant|cafe|bar|pub|fast_food)$"](${bboxQ});` +
+    `node["shop"](${bboxQ});` +
+    `node["office"](${bboxQ});` +
     `);out geom;`;
 }
 
 async function overpass(q, attempt = 0) {
   const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), 25000); // twardy timeout zapytania
+  const to = setTimeout(() => ctrl.abort(), 120000); // twardy timeout zapytania
   try {
     const res = await fetch(OVERPASS, {
       method: 'POST',
@@ -59,58 +56,66 @@ async function overpass(q, attempt = 0) {
   } catch (e) {
     clearTimeout(to);
     if (attempt < 4) {
-      await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+      await new Promise(r => setTimeout(r, 3000 * (attempt + 1)));
       return overpass(q, attempt + 1);
     }
     throw e;
   }
 }
 
-function splitElements(elements) {
-  const ways = [], buildings = [], poi = [];
-  for (const el of elements || []) {
-    if (el.type === 'way') {
-      if (el.tags && el.tags.building) buildings.push(el);
-      else if ((el.tags && el.tags.highway) || (el.tags && el.tags.railway)) ways.push(el);
-    } else if (el.type === 'node') {
-      poi.push(el);
-    }
-  }
-  return { ways, buildings, poi };
+function cellOf(lat, lon) {
+  return [Math.round((lon - STATIC_ORIGIN_LON) / STATIC_CELL), Math.round((lat - STATIC_ORIGIN_LAT) / STATIC_CELL)];
 }
+const gxMin = Math.round((BBOX.lonMin - STATIC_ORIGIN_LON) / STATIC_CELL);
+const gxMax = Math.round((BBOX.lonMax - STATIC_ORIGIN_LON) / STATIC_CELL);
+const gyMin = Math.round((BBOX.latMin - STATIC_ORIGIN_LAT) / STATIC_CELL);
+const gyMax = Math.round((BBOX.latMax - STATIC_ORIGIN_LAT) / STATIC_CELL);
+const inRange = (gx, gy) => gx >= gxMin && gx <= gxMax && gy >= gyMin && gy <= gyMax;
 
 async function main() {
   await mkdir(TILES_DIR, { recursive: true });
-  const latCells = [];
-  for (let lat = BBOX.latMin; lat <= BBOX.latMax + 1e-9; lat += STATIC_CELL) latCells.push(lat);
-  const lonCells = [];
-  for (let lon = BBOX.lonMin; lon <= BBOX.lonMax + 1e-9; lon += STATIC_CELL) lonCells.push(lon);
+  console.log('Pobieram cały obszar Trójmiasta jednym zapytaniem Overpass…');
+  const json = await overpass(query());
+  const els = json.elements || [];
+  console.log(`Otrzymano ${els.length} elementów.`);
 
-  const cells = [];
-  for (const lat of latCells)
-    for (const lon of lonCells)
-      cells.push([lat, lon]);
+  // Siatka kafelków: "gx_gy" -> {ways, buildings, poi}
+  const tiles = new Map();
+  const get = (gx, gy) => {
+    const k = gx + '_' + gy;
+    let t = tiles.get(k);
+    if (!t) { t = { ways: [], buildings: [], poi: [] }; tiles.set(k, t); }
+    return t;
+  };
 
-  let count = 0;
-  const CONCURRENCY = 4; // równoległe komórki (Overpass toleruje kilka wątków)
-  async function worker() {
-    while (cells.length) {
-      const [lat, lon] = cells.pop();
-      const gx = Math.round((lon - STATIC_ORIGIN_LON) / STATIC_CELL);
-      const gy = Math.round((lat - STATIC_ORIGIN_LAT) / STATIC_CELL);
-      const file = join(TILES_DIR, `${gx}_${gy}.json`);
-      try {
-        const json = await overpass(cellQuery(lat, lon));
-        const tile = splitElements(json.elements);
-        await writeFile(file, JSON.stringify(tile));
-        count++;
-        console.log(`OK ${gx}_${gy} (ways=${tile.ways.length} buildings=${tile.buildings.length} poi=${tile.poi.length})`);
-      } catch (e) {
-        console.error(`FAIL ${gx}_${gy}: ${e.message}`);
-      }
+  for (const el of els) {
+    if (el.type === 'way') {
+      const geom = el.geometry || [];
+      if (geom.length < 2) continue;
+      const lats = geom.map(g => g.lat), lons = geom.map(g => g.lon);
+      const laMin = Math.min(...lats), laMax = Math.max(...lats);
+      const loMin = Math.min(...lons), loMax = Math.max(...lons);
+      const [gx0, gy0] = cellOf(laMin, loMin);
+      const [gx1, gy1] = cellOf(laMax, loMax);
+      for (let gx = Math.max(gx0, gxMin); gx <= Math.min(gx1, gxMax); gx++)
+        for (let gy = Math.max(gy0, gyMin); gy <= Math.min(gy1, gyMax); gy++) {
+          if (el.tags && el.tags.building) get(gx, gy).buildings.push(el);
+          else get(gx, gy).ways.push(el);
+        }
+    } else if (el.type === 'node') {
+      if (el.lat == null || el.lon == null) continue;
+      const [gx, gy] = cellOf(el.lat, el.lon);
+      if (inRange(gx, gy)) get(gx, gy).poi.push(el);
     }
   }
-  await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+
+  let count = 0;
+  for (const [k, t] of tiles) {
+    if (!t.ways.length && !t.buildings.length && !t.poi.length) continue;
+    await writeFile(join(TILES_DIR, k + '.json'), JSON.stringify(t));
+    count++;
+  }
+  console.log(`Zapisano ${count} kafelków.`);
 
   if (count > 0) {
     const manifest = {
@@ -120,9 +125,9 @@ async function main() {
       tiles: count, endpoint: OVERPASS
     };
     await writeFile(join(TILES_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2));
-    console.log(`Wygenerowano ${count} kafelków.`);
+    console.log('Manifest zapisany.');
   } else {
-    console.log('Brak danych z Overpass – nie publikuję manifestu (kafelki puste).');
+    console.log('Brak danych z Overpass – nie publikuję manifestu.');
   }
 }
 
