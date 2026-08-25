@@ -102,7 +102,7 @@
 
     <div id="sidebar">
         <h1>🌿 W poszukiwaniu ciszy</h1>
-        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24q]</span></p>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24r]</span></p>
 
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
@@ -411,6 +411,10 @@
     }
 
     // Dzieli drogę na 20-metrowe kawałki i dla każdego liczy odległość + widoczność.
+    // WIDOCZNOŚĆ JEST LOKALNA dla każdego 20-metrowego kawałka (aSub..bSub) – wcześniej
+    // próbkowaliśmy widoczność całego segmentu OSM, co dla długich prostych odcinków
+    // (np. nasyp kolejowy) dawało jedną, zgrubną wartość nałożoną na każdy kawałek
+    // i PRZESZACOWYWAŁO osłonę budynkową.
     function segmentizeVis(p, geom, polys, radius) {
         const segs = [];
         for (let i = 0; i < geom.length - 1; i++) {
@@ -419,12 +423,16 @@
             if (segM < 1e-6) continue;
             const n = Math.max(1, Math.round(segM / SEG_STEP));
             for (let k = 0; k < n; k++) {
-                const t = (k + 0.5) / n;
-                const mid = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+                const t0 = k / n, t1 = (k + 1) / n;
+                const aSub = [a[0] + (b[0] - a[0]) * t0, a[1] + (b[1] - a[1]) * t0];
+                const bSub = [a[0] + (b[0] - a[0]) * t1, a[1] + (b[1] - a[1]) * t1];
+                const mid = [(aSub[0] + bSub[0]) / 2, (aSub[1] + bSub[1]) / 2];
                 const d = haversine(p, mid);
                 if (d > radius) continue;
-                const vis = visibilityFraction(p, a, b, polys, 3);
-                segs.push({ a, b, mid, d, vis });
+                const vis = (polys && polys.length)
+                    ? visibilityFraction(p, aSub, bSub, polys, 3)
+                    : 1;
+                segs.push({ a: aSub, b: bSub, mid, d, vis });
             }
         }
         return segs;
@@ -669,7 +677,7 @@
 
     // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-    console.log('CISZA-APP v2026-08-24q loaded');
+    console.log('CISZA-APP v2026-08-24r loaded');
 
     async function opQuery(q) {
         const RACE_TIMEOUT = 10000;
@@ -916,37 +924,18 @@
     }
 
     // ---------------- Główna analiza ----------------
-    async function analyze(lat, lng) {
-        if (marker) map.removeLayer(marker);
-        marker = L.marker([lat, lng]).addTo(map);
-        document.getElementById('result').style.display = 'none';
-        startLoader('1/3 Pobieram sieć dróg i kolei…');
-
-        const st = readSettings();
-        const cacheKey = lat.toFixed(3) + '|' + lng.toFixed(3) + '|' + Math.max(st.radius, 2000);
-        const fromCache = _cache.has(cacheKey);
-        if (fromCache) startLoader('1/3 Ładuję z pamięci podręcznej…');
-        else startLoader('1/3 Pobieram sieć dróg i kolei…');
-        let ways = fromCache ? _cache.get(cacheKey) : null;
+    async function runPipeline(lat, lng, st, radius, opts) {
+        opts = opts || {};
+        const cacheKey = lat.toFixed(3) + '|' + lng.toFixed(3) + '|' + Math.max(radius, 2000);
+        let ways = _cache.has(cacheKey) ? _cache.get(cacheKey) : null;
         if (!ways) {
-            try {
-                ways = await fetchWays(lat, lng, Math.max(st.radius, 2000));
-                if (ways.length) { _cache.set(cacheKey, ways); persistCache(_cache, LS_WAYS); } // nie cachujemy pustych!
-            } catch (e) {
-                stopLoader();
-                alert('Nie udało się pobrać danych z Overpass: ' + e.message +
-                      '\nSpróbuj ponownie za chwilę (serwery bywają przeciążone).');
-                return;
-            }
-            if (!ways.length) {
-                stopLoader();
-                alert('Overpass nie zwrócił danych (serwer przeciążony lub błąd zapytania). Spróbuj ponownie za chwilę.');
-                return;
-            }
+            ways = await fetchWays(lat, lng, Math.max(radius, 2000));
+            if (!ways.length) throw new Error('Overpass nie zwrócił danych (serwer przeciążony lub błąd zapytania).');
+            _cache.set(cacheKey, ways); persistCache(_cache, LS_WAYS);
         }
 
         const p = [lat, lng];
-        const ANALYSIS_R = Math.max(st.radius, 2000);
+        const ANALYSIS_R = radius;
 
         // --- Pass 1: zbierz drogi/koleje (geometria + meta) ---
         const cands = [];
@@ -972,19 +961,23 @@
         }
 
         // --- Pobierz budynki (przeszkody) w promieniu analizy ---
-        stepLoader('2/3 Pobieram zabudowę (przeszkody akustyczne)…');
-        const bRad = Math.min(ANALYSIS_R, BUILDING_RADIUS);
-        const dLatB = bRad / 111320, dLonB = bRad / (111320 * Math.cos(lat * Math.PI / 180));
-        const bbox = {
-            s: (lat - dLatB).toFixed(5), n: (lat + dLatB).toFixed(5),
-            w: (lng - dLonB).toFixed(5), e: (lng + dLonB).toFixed(5)
-        };
-        const bEls = await fetchBuildings(bbox);
-        const polys = bEls.map(el => (el.geometry || []).map(nodeLatLon)
-            .filter(g => g && isFinite(g[0]) && isFinite(g[1]))).filter(g => g.length >= 3);
-        const buildingNote = buildingFetchError
-            ? ' ⚠️ Nie udało się pobrać zabudowy – osłona budynkowa została pominięta (wynik może być zawyżony).'
-            : '';
+        let polys = [];
+        let buildingNote = '';
+        if (opts.buildings) {
+            stepLoader('2/3 Pobieram zabudowę (przeszkody akustyczne)…');
+            const bRad = Math.min(ANALYSIS_R, BUILDING_RADIUS);
+            const dLatB = bRad / 111320, dLonB = bRad / (111320 * Math.cos(lat * Math.PI / 180));
+            const bbox = {
+                s: (lat - dLatB).toFixed(5), n: (lat + dLatB).toFixed(5),
+                w: (lng - dLonB).toFixed(5), e: (lng + dLonB).toFixed(5)
+            };
+            const bEls = await fetchBuildings(bbox);
+            polys = bEls.map(el => (el.geometry || []).map(nodeLatLon)
+                .filter(g => g && isFinite(g[0]) && isFinite(g[1]))).filter(g => g.length >= 3);
+            buildingNote = buildingFetchError
+                ? ' ⚠️ Nie udało się pobrać zabudowy – osłona budynkowa została pominięta (wynik może być zawyżony).'
+                : '';
+        }
 
         // --- Pass 2: dyskretyzacja + rzucanie promieni (ray-casting) ---
         stepLoader('2b/3 Rzucam promienie i sumuję źródła liniowe…');
@@ -1016,6 +1009,7 @@
         }
 
         // --- Pobierz punktowe źródła (szkoły, boiska, gastronomia, usługi) ---
+        if (opts.poi) {
         stepLoader('2c/3 Pobieram punktowe źródła (szkoły, boiska, usługi)…');
         const poiKey = cacheKey + '|poi';
         let poi = _poiCache.has(poiKey) ? _poiCache.get(poiKey) : null;
@@ -1053,6 +1047,7 @@
             if (agg.segs.length) acc.segs.push(...agg.segs);
             if (agg.distMin < acc.distMin) { acc.distMin = agg.distMin; acc.closest = agg.closest; }
         }
+        }
 
         // Przelicz zagregowane drogi na źródła
         const raw = [];
@@ -1078,7 +1073,7 @@
 
         // --- Ukształtowanie terenu (wał) ---
         let terrainNote = 'Ukształtowanie terenu nie zostało uwzględnione.';
-        if (st.terrain && sources.length) {
+        if (opts.terrain && sources.length) {
             stepLoader('2/3 Sprawdzam teren i zabudowę (wał / budynki)…');
             const cand = sources
                 .filter(s => s.dist <= 1500)
@@ -1120,6 +1115,11 @@
             } else {
                 terrainNote = 'Brak dostępu do danych o wysokości terenu (API niedostępne).';
             }
+        }
+
+        // Szybka ocena (bez budynków/terenu) to szacunek górny – zaznacz to w nocie.
+        if (opts.provisional) {
+            terrainNote = '⏳ Szybka ocena bez osłony budynków i ukształtowania terenu (szacunek górny hałasu). Precyzyjna analiza z osłoną trwa — odświeżę za chwilę.';
         }
 
         // --- Podział na kierunki (36 sektorów co 10°) dla pajęczyny i róży ---
@@ -1264,8 +1264,40 @@
         render({
             score: Math.round(score), level_db: Math.round(levelDb * 10) / 10,
             assessment, terrain_note: terrainNote + buildingNote, sources: top,
-            sectors: sectorLevels, dominantDir
+            sectors: sectorLevels, dominantDir, provisional: !!opts.provisional
         });
+    }
+
+    // ---------------- Orchestrator: szybka ocena → precyzyjna ----------------
+    // Klik/GPS uruchamia najpierw szybką pase (tylko drogi/linie, 1 zapytanie
+    // Overpass) – wynik pojawia się w kilka sekund. Po ~45 s w tle leci pełna
+    // analiza (budynki + POI + teren) i wynik się odświeża. Jeśli pełna się
+    // nie uda, zostawiamy szybką ocenę z adnotacją.
+    let _preciseTimer = null;
+    async function analyze(lat, lng) {
+        if (marker) marker.setLatLng([lat, lng]);
+        else marker = L.marker([lat, lng]).addTo(map);
+        if (_preciseTimer) { clearTimeout(_preciseTimer); _preciseTimer = null; }
+        const st = readSettings();
+        const radius = st.radius;
+        startLoader('Analizuję (szybka ocena)…');
+        try {
+            await runPipeline(lat, lng, st, radius, { provisional: true, buildings: false, poi: false, terrain: false });
+        } catch (e) {
+            stopLoader();
+            alert('Overpass nie zwrócił danych (serwer przeciążony lub błąd zapytania). Spróbuj ponownie za chwilę.');
+            return;
+        }
+        _preciseTimer = setTimeout(async () => {
+            _preciseTimer = null;
+            try {
+                await runPipeline(lat, lng, st, radius, { provisional: false, buildings: true, poi: true, terrain: st.terrain });
+            } catch (e) {
+                const tn = document.getElementById('terrainNote');
+                const msg = ' ⚠️ Precyzyjna analiza nie powiodła się (Overpass niedostępny) — pokazuję szybką ocenę bez osłony budynków.';
+                if (tn) tn.innerText = (tn.innerText || '').replace(/ ⚠️ Precyzy.*$/, '') + msg;
+            }
+        }, 45000);
     }
 
     // Kolor poziomu dB: 35 dB (cicho) -> zielony, 75 dB (głośno) -> czerwony
