@@ -102,7 +102,7 @@
 
     <div id="sidebar">
         <h1>🌿 W poszukiwaniu ciszy</h1>
-        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24s]</span></p>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24t]</span></p>
 
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
@@ -677,7 +677,7 @@
 
     // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-    console.log('CISZA-APP v2026-08-24s loaded');
+    console.log('CISZA-APP v2026-08-24t loaded');
 
     async function opQuery(q) {
         const RACE_TIMEOUT = 10000;
@@ -931,6 +931,7 @@
     }
 
     // ---------------- Główna analiza ----------------
+    let _lastProv = null;   // ostatnia "szybka" ocena – pokazywana drobną czcionką przy precyzyjnej
     async function runPipeline(lat, lng, st, radius, opts) {
         opts = opts || {};
         const cacheKey = lat.toFixed(3) + '|' + lng.toFixed(3) + '|' + Math.max(radius, 2000);
@@ -1134,9 +1135,10 @@
             }
         }
 
-        // Szybka ocena (bez budynków/terenu) to szacunek górny – zaznacz to w nocie.
+        // Szybka ocena: osłona budynków/POI jest już z pamięci podręcznej (offline),
+        // ale ukształtowanie terenu (wały) jeszcze nie – zaznacz to w nocie.
         if (opts.provisional) {
-            terrainNote = '⏳ Szybka ocena bez osłony budynków i ukształtowania terenu (szacunek górny hałasu). Precyzyjna analiza z osłoną trwa — odświeżę za chwilę.';
+            terrainNote = '⏳ Szybka ocena z osłoną budynków (z pamięci podręcznej); precyzyjna uwzględniająca ukształtowanie terenu (wały) trwa — odświeżę za chwilę.';
         }
 
         // --- Podział na kierunki (36 sektorów co 10°) dla pajęczyny i róży ---
@@ -1162,9 +1164,10 @@
         for (let i = 1; i < SECTORS; i++) if (sectorLevels[i] > sectorLevels[domSecIdx]) domSecIdx = i;
         const dominantDir = sectors[domSecIdx].dir;
 
-        // --- Warstwa akustyczna: cała droga jako ciągła linia, kolor = widoczność ---
-        // Każdy 20-metrowy odcinek malujemy osobno: zielony = widoczny (słychać),
-        // czerwony = przesłonięty budynkami. To całościowa integracja źródła liniowego.
+        // --- Warstwa akustyczna: kolor = to, co SŁYSZYSZ z danego odcinka ---
+        // Każdy 20-metrowy odcinek malujemy osobno: CZERWONY = widoczny (słychać,
+        // głośno), ZIELONY = przesłonięty budynkami (cicho). Cienka linia to cały
+        // przebieg źródła (kolor = % przesłonięcia); gruba to odcinki w pobliżu.
         if (sources.length) {
             stepLoader('2d/3 Rysuję mapę hałasu…');
             coneLayer.clearLayers();
@@ -1180,13 +1183,14 @@
                     if (wi === 0) pl.bindTooltip(`${s.name}: przesłonięte budynkami ${(s.screenFrac * 100).toFixed(0)}%`);
                     pl.addTo(grp);
                 });
-                // gradient widoczności wzdłuż całej drogi (tylko bliskie odcinki)
-                if (s.dist <= 1500 && s.segs) {
+                // gradient widoczności wzdłuż drogi (tylko odcinki w promieniu analizy)
+                if (s.dist <= ANALYSIS_R && s.segs) {
                     const step = Math.max(1, Math.ceil(s.segs.length / 400));
                     for (let i = 0; i < s.segs.length; i += step) {
                         const sg = s.segs[i];
-                        if (sg.d > 1500) continue;
-                        const c = sg.vis > 0.66 ? '#1e8449' : sg.vis > 0.33 ? '#e67e22' : '#c0392b';
+                        if (sg.d > ANALYSIS_R) continue;
+                        // vis wysokie = widoczny = słychać = CZERWONY; niskie = przesłonięty = ZIELONY
+                        const c = sg.vis > 0.66 ? '#c0392b' : sg.vis > 0.33 ? '#e67e22' : '#1e8449';
                         L.polyline([sg.a, sg.b], { color: c, weight: 3, opacity: 0.55 }).addTo(grp);
                     }
                 }
@@ -1244,7 +1248,12 @@
         const score = Math.max(0, Math.min(100,
             (levelDb - AMBIENT_DB) / (REFERENCE_DB - AMBIENT_DB) * 100));
 
-        const top = sources.slice(0, 6).map(s => ({
+        let topSrc = sources.slice(0, 6);
+        // Źródła osłonięte wałem (red_ter > 0) mogą być poza top 6 – pokażmy je,
+        // by tabela nie pokazywała samego "0%" przy jednoczesnej wzmiance o wałach.
+        const bermSrc = sources.filter(s => (s.terrainFactor || 1) < 0.999 && !topSrc.includes(s));
+        if (bermSrc.length) topSrc = topSrc.concat(bermSrc).slice(0, 8);
+        const top = topSrc.map(s => ({
             name: s.name, type: GROUP_TYPE[s.group], category: GROUP_LABEL[s.group],
             key: s.group + '|' + s.name,
             distance_m: Math.round(s.dist),
@@ -1281,11 +1290,14 @@
         const cacheNote = liveFailed
             ? ' ⚠️ Overpass niedostępny – użyto danych z pamięci podręcznej (mogą być nieaktualne).'
             : '';
-        render({
+        const renderData = {
             score: Math.round(score), level_db: Math.round(levelDb * 10) / 10,
             assessment, terrain_note: terrainNote + buildingNote + cacheNote, sources: top,
             sectors: sectorLevels, dominantDir, provisional: !!opts.provisional
-        });
+        };
+        if (opts.provisional) _lastProv = { score: renderData.score, level_db: renderData.level_db };
+        else if (_lastProv) renderData.provisionalCompare = _lastProv;
+        render(renderData);
     }
 
     // ---------------- Orchestrator: szybka ocena → precyzyjna ----------------
@@ -1310,6 +1322,7 @@
         else marker = L.marker([lat, lng]).addTo(map);
         if (_preciseTimer) { clearTimeout(_preciseTimer); _preciseTimer = null; }
         if (_retryTimer) { clearTimeout(_retryTimer); _retryTimer = null; }
+        _lastProv = null;   // nowa analiza – nie pokazuj starej wstępnej oceny
         const st = readSettings();
         const radius = st.radius;
         const reqId = ++_analyzeReq;   // anuluje wygasłe przejścia przy kolejnym kliku
@@ -1320,7 +1333,7 @@
             if (reqId !== _analyzeReq) return;
             startLoader('Analizuję (szybka ocena)…');
             try {
-                await runPipeline(lat, lng, st, radius, { provisional: true, buildings: false, poi: false, terrain: false });
+                await runPipeline(lat, lng, st, radius, { provisional: true, buildings: true, poi: true, terrain: false });
             } catch (e) {
                 if (reqId !== _analyzeReq) return;
                 if (e && e.code === 'NO_DATA') {
@@ -1415,7 +1428,13 @@
         c.style.background = color;
         document.getElementById('riskLevel').innerText =
             label + '  (poziom ' + d.level_db + ' dB)';
-        document.getElementById('assessment').innerText = d.assessment || '';
+        const aEl = document.getElementById('assessment');
+        aEl.innerHTML = d.assessment ? d.assessment.replace(/</g, '&lt;') : '';
+        if (d.provisionalCompare) {
+            aEl.innerHTML += ' <span style="font-size:0.8em;opacity:0.75;">' +
+                'Wstępna ocena (bez ukształtowania terenu): <b>' + d.provisionalCompare.score +
+                '</b> / ' + d.provisionalCompare.level_db + ' dB</span>';
+        }
         document.getElementById('terrainNote').innerText = d.terrain_note || '';
 
         // Róża kierunkowa (pajęczyna)
@@ -1520,4 +1539,5 @@
     </script>
 </body>
 </html>
+
 
