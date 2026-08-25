@@ -973,8 +973,9 @@
             const group = classify(tag, kind);
             if (!group) continue;
             cands.push({
-                name: tags.name || GROUP_LABEL[group], kind, group,
-                weight: WEIGHTS[group], geom, base, id: el.id
+                name: tags.name || null,
+                label: tags.name || GROUP_LABEL[group],
+                kind, group, weight: WEIGHTS[group], geom, base, id: el.id
             });
         }
 
@@ -1013,7 +1014,7 @@
             let acc = accByKey.get(key);
             if (!acc) {
                 acc = {
-                    name: c.name, kind: c.kind, group: c.group, weight: c.weight, base: c.base,
+                    name: c.name, label: c.label, kind: c.kind, group: c.group, weight: c.weight, base: c.base,
                     energy: 0, energyUnblocked: 0, distMin: Infinity, closest: null,
                     ways: [], segs: []
                 };
@@ -1053,7 +1054,7 @@
             let acc = accByKey.get(key);
             if (!acc) {
                 acc = {
-                    name: c.name, kind: 'poi', group: c.group, weight: 1, base: c.base,
+                    name: c.name, label: c.name, kind: 'poi', group: c.group, weight: 1, base: c.base,
                     energy: 0, energyUnblocked: 0, distMin: Infinity, closest: null,
                     ways: [], segs: [], periodic: PERIODIC_POI.has(c.group)
                 };
@@ -1069,6 +1070,7 @@
 
         // Przelicz zagregowane drogi na źródła
         const raw = [];
+        let uid = 0;
         for (const acc of accByKey.values()) {
             const energy = acc.energy;
             const level = 10 * Math.log10(energy + 1e-9);
@@ -1079,7 +1081,8 @@
             const screenFrac = acc.energyUnblocked > 0
                 ? Math.min(0.95, Math.max(0, 1 - acc.energy / acc.energyUnblocked)) : 0;
             raw.push({
-                name: acc.name, kind: acc.kind, group: acc.group, weight: acc.weight,
+                uid: 'src' + (uid++),
+                name: acc.name, label: acc.label, kind: acc.kind, group: acc.group, weight: acc.weight,
                 geom: acc.ways, segs: acc.segs,
                 dist: acc.distMin, closest: acc.closest, base: acc.base,
                 level, energy, terrainFactor: 1, reduction: 0, rise: null,
@@ -1088,6 +1091,7 @@
             });
         }
         const sources = raw;
+        console.table(sources.map(s => ({ name: s.label, group: s.group, dist: Math.round(s.dist), energy: s.energy.toFixed(1), uid: s.uid })));
 
         // --- Ukształtowanie terenu (wał) ---
         let terrainNote = 'Ukształtowanie terenu nie zostało uwzględnione.';
@@ -1180,14 +1184,14 @@
                 .sort((a, b) => b.energy - a.energy)
                 .slice(0, 25);
             for (const s of drawList) {
-                const key = s.group + '|' + s.name;
+                const key = s.uid;
                 const baseCol = s.screenFrac > 0.4 ? '#1e8449' : s.screenFrac > 0.15 ? '#e67e22' : '#c0392b';
                 const grp = L.featureGroup().addTo(coneLayer);
                 // cienka linia przebiegu każdego way-a (tooltips + orientacja)
                 const ways = Array.isArray(s.geom[0]) && Array.isArray(s.geom[0][0]) ? s.geom : [s.geom];
                 ways.forEach((w, wi) => {
                     const pl = L.polyline(w, { color: baseCol, weight: 2, opacity: 0.5 });
-                    if (wi === 0) pl.bindTooltip(`${s.name}: przesłonięte budynkami ${(s.screenFrac * 100).toFixed(0)}%`);
+                    if (wi === 0) pl.bindTooltip(`${s.label}: przesłonięte budynkami ${(s.screenFrac * 100).toFixed(0)}%`);
                     pl.addTo(grp);
                 });
                 // gradient widoczności wzdłuż drogi (tylko odcinki w promieniu analizy)
@@ -1262,8 +1266,8 @@
         const bermSrc = sources.filter(s => (s.terrainFactor || 1) < 0.999 && !topSrc.includes(s) && !nearSrc.includes(s));
         topSrc = topSrc.concat(nearSrc, bermSrc).slice(0, 10);
         const top = topSrc.map(s => ({
-            name: s.name, type: GROUP_TYPE[s.group], category: GROUP_LABEL[s.group],
-            key: s.group + '|' + s.name,
+            name: s.label, type: GROUP_TYPE[s.group], category: GROUP_LABEL[s.group],
+            key: s.uid,
             distance_m: Math.round(s.dist),
             base_pct: s.basePct,
             red_dist: s.redDist,
@@ -1291,7 +1295,7 @@
                 const col = levelColor(s.level);
                 const pl = L.polyline([[lat, lng], s.closest], { color: col, weight: 2, opacity: 0.7, dashArray: '4 4' });
                 const dirTxt = s.closest ? compass(bearingDeg([lat, lng], s.closest)) : '';
-                pl.bindTooltip(`${s.name} · ${Math.round(s.level)} dB · ${Math.round(s.dist)} m · kier. ${dirTxt}` +
+                pl.bindTooltip(`${s.label} · ${Math.round(s.level)} dB · ${Math.round(s.dist)} m · kier. ${dirTxt}` +
                     (s.periodic ? ' · 🌬️ okresowo' : ''));
                 pl.addTo(threadLayer);
             }
