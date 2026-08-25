@@ -974,7 +974,7 @@
             if (!group) continue;
             cands.push({
                 name: tags.name || GROUP_LABEL[group], kind, group,
-                weight: WEIGHTS[group], geom, base
+                weight: WEIGHTS[group], geom, base, id: el.id
             });
         }
 
@@ -1009,7 +1009,7 @@
             if (agg.distMin > CUTOFF[c.group]) continue;
             const key = c.name
                 ? c.group + '|' + c.name
-                : c.group + '|__' + Math.round(agg.closest[0] * 1000) + '_' + Math.round(agg.closest[1] * 1000);
+                : c.group + '|#' + c.id;
             let acc = accByKey.get(key);
             if (!acc) {
                 acc = {
@@ -1171,7 +1171,14 @@
         if (sources.length) {
             stepLoader('2d/3 Rysuję mapę hałasu…');
             coneLayer.clearLayers();
-            const drawList = sources.slice().sort((a, b) => b.energy - a.energy).slice(0, 8);
+            // Rysujemy WSZYSTKIE źródła wewnątrz promienia analizy (nie tylko top 8
+            // wg energii całkowitej), by bliskie, krótkie i odsłonięte odcinki nie
+            // znikały pod długimi, cichszymi drogami. Krok bezpieczeństwa przed
+            // przeładowaniem mapy.
+            const drawList = sources
+                .filter(s => s.closest && s.dist <= ANALYSIS_R)
+                .sort((a, b) => b.energy - a.energy)
+                .slice(0, 25);
             for (const s of drawList) {
                 const key = s.group + '|' + s.name;
                 const baseCol = s.screenFrac > 0.4 ? '#1e8449' : s.screenFrac > 0.15 ? '#e67e22' : '#c0392b';
@@ -1249,10 +1256,11 @@
             (levelDb - AMBIENT_DB) / (REFERENCE_DB - AMBIENT_DB) * 100));
 
         let topSrc = sources.slice(0, 6);
-        // Źródła osłonięte wałem (red_ter > 0) mogą być poza top 6 – pokażmy je,
-        // by tabela nie pokazywała samego "0%" przy jednoczesnej wzmiance o wałach.
-        const bermSrc = sources.filter(s => (s.terrainFactor || 1) < 0.999 && !topSrc.includes(s));
-        if (bermSrc.length) topSrc = topSrc.concat(bermSrc).slice(0, 8);
+        // Źródła bardzo bliskie punktu (nawet krótkie) oraz osłonięte wałem mogą być
+        // poza top 6 wg energii całkowitej – dopisujemy je, by nie znikały z tabeli.
+        const nearSrc = sources.filter(s => s.dist <= 300 && !topSrc.includes(s));
+        const bermSrc = sources.filter(s => (s.terrainFactor || 1) < 0.999 && !topSrc.includes(s) && !nearSrc.includes(s));
+        topSrc = topSrc.concat(nearSrc, bermSrc).slice(0, 10);
         const top = topSrc.map(s => ({
             name: s.name, type: GROUP_TYPE[s.group], category: GROUP_LABEL[s.group],
             key: s.group + '|' + s.name,
@@ -1272,8 +1280,11 @@
         // --- Pajęczyna: nitki od punktu do każdego istotnego źródła (kolor = dB) ---
         threadLayer.clearLayers();
         if (document.getElementById('showThreads').checked) {
+            // Nitki: bliskie źródła pokazujemy zawsze (nawet krótkie), dalsze tylko
+            // gdy ich całkowity poziom przekracza tło. Unikamy znikania odsłoniętych
+            // odcinków tuż przy punkcie.
             const tlist = sources
-                .filter(s => s.closest && isFinite(s.level) && s.dist <= ANALYSIS_R && s.level > 35)
+                .filter(s => s.closest && isFinite(s.level) && s.dist <= ANALYSIS_R && (s.level > 30 || s.dist <= 400))
                 .sort((a, b) => b.energy - a.energy)
                 .slice(0, 60);
             for (const s of tlist) {
