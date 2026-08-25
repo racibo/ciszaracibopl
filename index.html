@@ -1102,6 +1102,8 @@
             });
         }
         const sources = raw;
+        window.__lastSources = sources;
+        window.__lastPoint = p;
         console.table(sources.map(s => ({
             name: s.name || s.label,
             group: s.group,
