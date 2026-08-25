@@ -84,6 +84,14 @@
         }
         .err { color: #c0392b; font-size: 0.85em; }
         .small { font-size: 0.72em; color: #95a5a6; margin-top: 10px; line-height: 1.4; }
+        .edu { font-size: 0.9em; margin-top: 14px; line-height: 1.55; color: #374151;
+            background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 10px; }
+        .edu summary { cursor: pointer; font-weight: 600; color: #1f2937; }
+        .edu p { margin: 8px 0; }
+        .edu-h { font-weight: 600; margin-bottom: 2px; }
+        .edu-list { margin: 4px 0 4px 18px; padding: 0; }
+        .edu-list li { margin: 2px 0; }
+        .edu-note { font-size: 0.85em; color: #9ca3af; font-style: italic; }
 
         #roseWrap { display: none; margin-top: 12px; text-align: center; }
         #rose { display: inline-block; }
@@ -177,6 +185,32 @@
             Dane: OpenStreetMap (Overpass), Open-Meteo (wysokości), Nominatim.
             Obliczenia wykonywane w przeglądarce – brak serwera.
         </div>
+
+        <details class="edu">
+            <summary>ℹ️ Decybele i zdrowie słuchu</summary>
+            <p><b>Decybel (dB)</b> to jednostka <b>logarytmiczna</b> – nie liniowa. +10 dB oznacza
+            <b>10 razy</b> większą energię dźwięku (i ~2× odczuwalną głośność); +3 dB to <b>2 razy</b>
+            więcej energii. Dlatego nawet mały przyrost w dB może oznaczać dużą zmianę.</p>
+            <p class="edu-h">Przykłady poziomów hałasu:</p>
+            <ul class="edu-list">
+                <li>30 dB – szept, bardzo cicha noc</li>
+                <li>40 dB – ciche biuro, biblioteka (polska norma w domu: <b>40 dnia / 30 w nocy</b>)</li>
+                <li>50–60 dB – szum lodówki, spokojna rozmowa</li>
+                <li>60–70 dB – telewizor, ruch na ulicy</li>
+                <li>70–80 dB – autostrada, odkurzacz (powyżej 70 dB szkodzi przy długim narażeniu)</li>
+                <li>85 dB – głośny zakład / słuchawki na full – <b>limit bezpiecznej pracy 8 h</b></li>
+                <li>90–100 dB – traktor, metro, klakson (słuch uszkadza się szybciej)</li>
+                <li>110–120 dB – koncert, start samolotu – <b>ból i ryzyko trwałego uszkodzenia</b></li>
+                <li>130+ dB – młot pneumatyczny, wybuchy</li>
+            </ul>
+            <p><b>Dlaczego to ważne:</b> długotrwały hałas powyżej 70 dB męczy i psuje sen, a powyżej
+            85 dB trwale niszczy komórki słuchowe (nieodwracalnie). Organizacja NIOSH/CDC podaje, że
+            bezpieczny czas przy 85 dB to 8 h, ale już przy 100 dB tylko 15 min.</p>
+            <p><b>Jak chronić słuch:</b> unikaj ciszy „pod korek", słuchaj do 60% głośności, noś
+            zatyczki/głuchy na koncertach i meczach, rób przerwy w hałasie. Sygnały ostrzegawcze:
+            szum w uszach po wyjściu, nie słyszysz rozmowy z 2 m, uczucie „gatka" w uszach.</p>
+            <p class="edu-note">Treść edukacyjna – nie zastępuje porady lekarza ani dokładnych pomiarów akustycznych.</p>
+        </details>
     </div>
 
     <div id="map"></div>
@@ -1314,14 +1348,21 @@
             const domSec = sectors[domSecIdx];
             assessment += ` Najgłośniej z kierunku ${compass(domSec.dir)} (${Math.round(domSec.dir)}°)` +
                 (domSec.top ? ` – ${domSec.top.name}.` : '.');
-            // Źródła okresowe (szkoła/boisko/stadion): hałas rośnie w godzinach ich pracy
+            // Źródła okresowe (szkoła/boisko/stadion): hałas w godzinach ich pracy
             const pSrc = sources.filter(s => s.periodic);
             if (pSrc.length) {
                 let pE = 0, tE = 0;
                 for (const s of sources) { const e = s.energy * (s.terrainFactor || 1); tE += e; if (s.periodic) pE += e; }
-                const addDb = tE > pE ? Math.round(10 * Math.log10(tE / (tE - pE))) : 0;
+                const pLevel = pE > 0 ? 10 * Math.log10(pE) : 0;
+                const addDb = tE > pE ? 10 * Math.log10(tE / (tE - pE)) : 0;
                 const names = [...new Set(pSrc.map(s => s.label))].join(', ');
-                assessment += ` 🏫 W pobliżu źródła okresowe (${names}): w godzinach ich pracy (lekcje, treningi, mecze) hałas rośnie o ok. ${addDb} dB – w przerwach, wakacjach i w nocy jest wyraźnie ciszej.`;
+                let pMsg = '';
+                if (addDb >= 1) {
+                    pMsg = ` 🏫 W pobliżu źródła okresowe (${names}): w godzinach ich pracy (lekcje, treningi, mecze) hałas rośnie o ok. ${Math.round(addDb)} dB – w przerwach, wakacjach i w nocy jest wyraźnie ciszej.`;
+                } else if (pLevel >= 30) {
+                    pMsg = ` 🏫 W pobliżu źródła okresowe (${names}) – gdy są czynne, dokładają hałas na poziomie ok. ${Math.round(pLevel)} dB (w przerwach, wakacjach i w nocy jest ciszej).`;
+                }
+                if (pMsg) assessment += pMsg;
             }
         } else {
             assessment = 'W promieniu analizy nie wykryto istotnych dróg ani linii kolejowych – miejsce zapowiada się bardzo cicho.';
@@ -1388,9 +1429,10 @@
                 .slice(0, 60);
             const maxE = tlist.length ? tlist[0].energy : 0;
             for (const s of tlist) {
-                // Najgłośniejsze źródła (dominujące) – wyraźna czerwona, gruba nitka.
+                // Nitki kolorowane na skali zielona→czerwona wg poziomu hałasu;
+                // najgłośniejsze (dominujące) dodatkowo pogrubione dla czytelności.
                 const loud = s.energy >= 0.4 * maxE;
-                const col = loud ? '#c0392b' : levelColor(s.level);
+                const col = levelColor(s.level);
                 const pl = L.polyline([[lat, lng], s.closest], {
                     color: col, weight: loud ? 4 : 1.5, opacity: loud ? 0.95 : 0.5,
                     dashArray: loud ? null : '4 4'

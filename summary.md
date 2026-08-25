@@ -121,15 +121,27 @@ https://www.openstreetmap.org/ czy droga istnieje; w razie potrzeby przebuduj ka
    (szept 30 / rozmowa 60 / ulica 70 / autostrada 80). `dbAnalogy(level)` zwraca frazę
    (np. "jak główna droga w szczycie"); użyta w `buildAssessment` i w nowym `#noiseScale`
    ("Twój wynik to X dB – [analogia].").
-3. **Najgłośniejsze nitki pajęczyny na czerwono**: w pętli nitek `loud = energy >= 0.4*maxE`
-   → kolor `#c0392b`, grubość 4, bez przerywania; reszta cienka przerywana wg `levelColor`.
+ 3. **Nitki pajęczyny kolorowane na skali zielona→czerwona** (`levelColor` wg poziomu dB) —
+    wszystkie nitki mają kolor z gradientu; najgłośniejsze (`loud = energy >= 0.4*maxE`)
+    dodatkowo pogrubione (waga 4, pełna opakość), reszta cienkie przerywane.
 4. **Mapa hałasu / przebadane miejsca**: `saveHistory(lat,lng,score,level)` →
    `localStorage[cisza_history_v1]` (do 300 pkt). `historyLayer` (L.layerGroup) rysuje
    kolorowe `circleMarker` (kolor wg `scoreColor`, promień rośnie z wynikiem) z popupem.
    Przełącznik `showHistory` (domyślnie włączony) + link "wyczyść" (`clearHistory`).
-5. **Źródła punktowe (POI) + hałas okresowy**: szkoły/boiska/stadiony uwzględniane (już
-   były), teraz **zawsze pokazywane w tabeli** (periodicSrc dopisane do topSrc, limit 12).
-   W `buildAssessment` dopisana informacja: "w godzinach pracy (lekcje/treningi/mecze)
-   hałas rośnie o ok. X dB" — X = różnica dB między sumą energii całkowitej a bez
-   źródeł okresowych (`10*log10(tE/(tE-pE))`).
+ 5. **Źródła punktowe (POI) + hałas okresowy**: szkoły/boiska/stadiony uwzględniane (już
+    były), teraz **zawsze pokazywane w tabeli** (periodicSrc dopisane do topSrc, limit 12).
+    W `buildAssessment` notatka okresowa: jeśli przyrost z powodu źródeł okresowych
+    (`10*log10(tE/(tE-pE))`) ≥ 1 dB → "hałas rośnie o ok. X dB"; w przeciwnym razie (gdy
+    źródła okresowe pomijalne vs suma, np. daleki szkolny obiekt) pokazuje ich własny
+    poziom (`10*log10(pE)`) lub milczy — **nigdy nie pokazuje "0 dB"** (poprzedni błąd).
+
+## Poprawki (bieżąca sesja)
+- **Usunięto mylące "rośnie o ok. 0 dB"** — notatka okresowa warunkowa (przyrost ≥1 dB
+  albo poziom własny ≥30 dB), w przeciwnym razie pusta.
+- **Nitki pajęczyny**: wszystkie na gradient `levelColor` (zielona→czerwona); najgłośniejsze
+  tylko pogrubione, nie wymuszają czystego czerwonego.
+- **Panel edukacyjny "Decybele i zdrowie słuchu"** (zwijany `<details class="edu">` w
+  sidebarze): logarytmiczna natura dB, tabela przykładów 30–130 dB, normy PL (40/30 dB dom,
+  85 dB praca), wpływ na zdrowie (NIOSH/CDC), porady ochronne. Treść edukacyjna, nie
+  zastępuje pomiaru akustycznego.
 
