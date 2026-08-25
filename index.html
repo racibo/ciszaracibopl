@@ -102,7 +102,7 @@
 
     <div id="sidebar">
         <h1>🌿 W poszukiwaniu ciszy</h1>
-        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24r]</span></p>
+        <p class="sub">Znajdź miejsce, gdzie naprawdę usłyszysz ciszę. <span style="opacity:.6">[wersja 2026-08-24s]</span></p>
 
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Wpisz miejscowość lub adres...">
@@ -677,7 +677,7 @@
 
     // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
     const encQ = (s) => encodeURIComponent(s).replace(/[()*!~']/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-    console.log('CISZA-APP v2026-08-24r loaded');
+    console.log('CISZA-APP v2026-08-24s loaded');
 
     async function opQuery(q) {
         const RACE_TIMEOUT = 10000;
@@ -902,6 +902,13 @@
         if (_loaderTimer) { clearInterval(_loaderTimer); _loaderTimer = null; }
         document.getElementById('loader').style.display = 'none';
     }
+    // Zatrzymuje licznik sekund, ale trzyma pasek widoczny (np. przy ponawianiu Overpass).
+    function freezeLoader(text) {
+        if (_loaderTimer) { clearInterval(_loaderTimer); _loaderTimer = null; }
+        const el = document.getElementById('loader');
+        el.style.display = 'block';
+        el.innerText = text;
+    }
 
     // ---------------- API: Open-Meteo wysokości ----------------
     async function fetchElevation(points) {
@@ -927,11 +934,21 @@
     async function runPipeline(lat, lng, st, radius, opts) {
         opts = opts || {};
         const cacheKey = lat.toFixed(3) + '|' + lng.toFixed(3) + '|' + Math.max(radius, 2000);
-        let ways = _cache.has(cacheKey) ? _cache.get(cacheKey) : null;
-        if (!ways) {
+        // Zawsze próbujemy live Overpass najpierw (świeże dane). Dopiero gdy live
+        // zawiedzie (sieć/serwer), cofamy się do pamięci podręcznej (z adnotacją),
+        // a gdy i tej brak – zgłaszamy błąd do orchestratora (ten ponawia).
+        let ways = null, liveFailed = false;
+        try {
             ways = await fetchWays(lat, lng, Math.max(radius, 2000));
-            if (!ways.length) throw new Error('Overpass nie zwrócił danych (serwer przeciążony lub błąd zapytania).');
-            _cache.set(cacheKey, ways); persistCache(_cache, LS_WAYS);
+            if (ways && ways.length) { _cache.set(cacheKey, ways); persistCache(_cache, LS_WAYS); }
+        } catch (e) { liveFailed = true; ways = null; }
+        if (!ways || !ways.length) {
+            if (_cache.has(cacheKey)) { ways = _cache.get(cacheKey); liveFailed = true; }
+        }
+        if (!ways || !ways.length) {
+            const err = new Error('Overpass nie zwrócił danych (serwer przeciążony lub błąd zapytania).');
+            err.code = 'NO_DATA';
+            throw err;
         }
 
         const p = [lat, lng];
@@ -1261,9 +1278,12 @@
             threadLayer.addTo(map);
         }
 
+        const cacheNote = liveFailed
+            ? ' ⚠️ Overpass niedostępny – użyto danych z pamięci podręcznej (mogą być nieaktualne).'
+            : '';
         render({
             score: Math.round(score), level_db: Math.round(levelDb * 10) / 10,
-            assessment, terrain_note: terrainNote + buildingNote, sources: top,
+            assessment, terrain_note: terrainNote + buildingNote + cacheNote, sources: top,
             sectors: sectorLevels, dominantDir, provisional: !!opts.provisional
         });
     }
@@ -1273,31 +1293,68 @@
     // Overpass) – wynik pojawia się w kilka sekund. Po ~45 s w tle leci pełna
     // analiza (budynki + POI + teren) i wynik się odświeża. Jeśli pełna się
     // nie uda, zostawiamy szybką ocenę z adnotacją.
-    let _preciseTimer = null;
+    // Gdy Overpass nie działa, NIE pokazujemy irytującego alertu – zamiast tego
+    // automatycznie ponawiamy próby w tle i informujemy o statusie.
+    let _preciseTimer = null, _retryTimer = null, _analyzeReq = 0;
+    function addRetryButton(lat, lng) {
+        const el = document.getElementById('loader');
+        if (!el || el.querySelector('button')) return;
+        const b = document.createElement('button');
+        b.innerText = 'Spróbuj ponownie';
+        b.style.marginLeft = '10px';
+        b.onclick = () => { if (_retryTimer) clearTimeout(_retryTimer); analyze(lat, lng); };
+        el.appendChild(b);
+    }
     async function analyze(lat, lng) {
         if (marker) marker.setLatLng([lat, lng]);
         else marker = L.marker([lat, lng]).addTo(map);
         if (_preciseTimer) { clearTimeout(_preciseTimer); _preciseTimer = null; }
+        if (_retryTimer) { clearTimeout(_retryTimer); _retryTimer = null; }
         const st = readSettings();
         const radius = st.radius;
-        startLoader('Analizuję (szybka ocena)…');
-        try {
-            await runPipeline(lat, lng, st, radius, { provisional: true, buildings: false, poi: false, terrain: false });
-        } catch (e) {
-            stopLoader();
-            alert('Overpass nie zwrócił danych (serwer przeciążony lub błąd zapytania). Spróbuj ponownie za chwilę.');
-            return;
-        }
-        _preciseTimer = setTimeout(async () => {
-            _preciseTimer = null;
+        const reqId = ++_analyzeReq;   // anuluje wygasłe przejścia przy kolejnym kliku
+        let attempt = 0;
+        const MAX = 8;
+
+        async function quick() {
+            if (reqId !== _analyzeReq) return;
+            startLoader('Analizuję (szybka ocena)…');
             try {
-                await runPipeline(lat, lng, st, radius, { provisional: false, buildings: true, poi: true, terrain: st.terrain });
+                await runPipeline(lat, lng, st, radius, { provisional: true, buildings: false, poi: false, terrain: false });
             } catch (e) {
-                const tn = document.getElementById('terrainNote');
-                const msg = ' ⚠️ Precyzyjna analiza nie powiodła się (Overpass niedostępny) — pokazuję szybką ocenę bez osłony budynków.';
-                if (tn) tn.innerText = (tn.innerText || '').replace(/ ⚠️ Precyzy.*$/, '') + msg;
+                if (reqId !== _analyzeReq) return;
+                if (e && e.code === 'NO_DATA') {
+                    attempt++;
+                    if (attempt < MAX) {
+                        const delay = Math.min(60000, 8000 * attempt);
+                        freezeLoader('Overpass niedostępny – ponawiam próbę ' + attempt + '/' + MAX + ' (za ' + Math.round(delay / 1000) + ' s)…');
+                        _retryTimer = setTimeout(quick, delay);
+                    } else {
+                        freezeLoader('Overpass nadal niedostępny.');
+                        addRetryButton(lat, lng);
+                    }
+                    return;
+                }
+                throw e;
             }
-        }, 45000);
+            schedulePrecise();
+        }
+        function schedulePrecise() {
+            if (reqId !== _analyzeReq) return;
+            freezeLoader('Szybka ocena gotowa — precyzyjna (z osłoną budynków) w toku…');
+            _preciseTimer = setTimeout(async () => {
+                _preciseTimer = null;
+                if (reqId !== _analyzeReq) return;
+                try {
+                    await runPipeline(lat, lng, st, radius, { provisional: false, buildings: true, poi: true, terrain: st.terrain });
+                } catch (e) {
+                    const tn = document.getElementById('terrainNote');
+                    const msg = ' ⚠️ Precyzyjna analiza nie powiodła się (Overpass niedostępny) — pokazuję szybką ocenę bez osłony budynków.';
+                    if (tn) tn.innerText = (tn.innerText || '').replace(/ ⚠️ Precyzy.*$/, '') + msg;
+                }
+            }, 45000);
+        }
+        quick();
     }
 
     // Kolor poziomu dB: 35 dB (cicho) -> zielony, 75 dB (głośno) -> czerwony
@@ -1463,3 +1520,4 @@
     </script>
 </body>
 </html>
+
