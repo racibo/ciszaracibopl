@@ -683,15 +683,26 @@
         } catch (e) { /* brak miejsca – ignorujemy */ }
     }
 
-    // Opisowa ocena najbardziej uciążliwego źródła
-    function dbAnalogy(level) {
-        if (level < 35) return 'ciszej niż w bibliotece';
-        if (level < 45) return 'jak ciche przedmieście w nocy';
-        if (level < 55) return 'jak spokojna rozmowa w domu';
-        if (level < 65) return 'jak ruchliwa ulica za oknem';
-        if (level < 75) return 'jak główna droga w godzinach szczytu';
-        if (level < 85) return 'jak autostrada lub pociąg tuż obok';
-        return 'jak stacja kolejowa w szczycie';
+    // Opis tego, co słychać, w oparciu o poziom i dominujące źródło (droga / kolej).
+    // dom: obiekt źródła (surowy lub z tabeli) z polami group/type/category, dist/distance_m, periodic.
+    function dbAnalogy(level, dom) {
+        if (level == null) return '';
+        const isRail = dom && (dom.group === 'kolej' || dom.group === 'miejska' ||
+            /kolej|pociąg|tramw/i.test(dom.category || dom.type || ''));
+        const dist = dom ? (dom.dist != null ? dom.dist : dom.distance_m) : null;
+        const periodic = dom ? !!dom.periodic : false;
+        if (level < 38) return 'Słychać tylko cichy szum tła';
+        if (!dom) return level < 50 ? 'Słychać cichy szum' : 'Słychać wyraźny szum';
+        if (isRail) {
+            if (periodic) return level >= 70 ? 'Uciążliwy, okresowy hałas pociągów' : 'Okresowy, nieuciążliwy hałas pociągów';
+            return level >= 65 ? 'Wyraźny szum kolei' : 'Słyszalna kolej w oddali';
+        }
+        // drogi
+        if (dist != null && dist > 450) return 'Oddalony szum samochodów';
+        if (level < 50) return 'Cichy szum samochodów';
+        if (level < 62) return 'Ciągły szum samochodów';
+        if (level < 75) return 'Wyraźny szum ruchliwej drogi';
+        return 'Głośny hałas drogi';
     }
     function buildAssessment(d, sources, st) {
         const dM = Math.round(d.dist);
@@ -709,7 +720,7 @@
         else if (lvl < 55) impact = 'Umiarkowany szum; przy otwartych oknach w szczycie może być lekko słychać.';
         else if (lvl < 65) impact = 'Wyraźny szum; przy otwartych oknach może przeszkadzać, szczególnie w szczycie.';
         else impact = 'Silny hałas; przeszkadza przy otwartych oknach, szczególnie w godzinach szczytu.';
-        let txt = `Największym źródłem hałasu jest oddalona o ${dM} m ${grp}${nm}. To droga ${intensity}; w Twoim punkcie wnosi ok. ${lvl} dB – ${dbAnalogy(lvl)}. ${impact}`;
+        let txt = `Największym źródłem hałasu jest oddalona o ${dM} m ${grp}${nm}. To droga ${intensity}; w Twoim punkcie wnosi ok. ${lvl} dB – ${dbAnalogy(lvl, d)}. ${impact}`;
         const others = sources.length - 1;
         if (others > 0) txt += ` W pobliżu są też inne szlaki (${others}), które łącznie podnoszą tło hałasu.`;
         // Który czynnik najbardziej redukuje to źródło (wyliczone z tłumień energetycznych)
@@ -1512,6 +1523,7 @@
         };
         if (opts.provisional) _lastProv = { score: renderData.score, level_db: renderData.level_db };
         else if (_lastProv) renderData.provisionalCompare = _lastProv;
+        if (opts.reqId != null && opts.reqId !== _analyzeReq) return; // anuluj wygasłe przejście
         if (!opts.provisional) saveHistory(lat, lng, renderData.score, renderData.level_db);
         render(renderData);
     }
@@ -1539,6 +1551,7 @@
         if (_preciseTimer) { clearTimeout(_preciseTimer); _preciseTimer = null; }
         if (_retryTimer) { clearTimeout(_retryTimer); _retryTimer = null; }
         _lastProv = null;   // nowa analiza – nie pokazuj starej wstępnej oceny
+        document.getElementById('result').style.display = 'none'; // ukryj wynik poprzedniego miejsca
         const st = readSettings();
         const radius = st.radius;
         const reqId = ++_analyzeReq;   // anuluje wygasłe przejścia przy kolejnym kliku
@@ -1549,7 +1562,7 @@
             if (reqId !== _analyzeReq) return;
             startLoader('Analizuję (szybka ocena)…');
             try {
-                await runPipeline(lat, lng, st, radius, { provisional: true, buildings: true, poi: true, terrain: false });
+                await runPipeline(lat, lng, st, radius, { provisional: true, buildings: true, poi: true, terrain: false, reqId });
             } catch (e) {
                 if (reqId !== _analyzeReq) return;
                 if (e && e.code === 'NO_DATA') {
@@ -1575,7 +1588,7 @@
                 _preciseTimer = null;
                 if (reqId !== _analyzeReq) return;
                 try {
-                    await runPipeline(lat, lng, st, radius, { provisional: false, buildings: true, poi: true, terrain: st.terrain });
+                    await runPipeline(lat, lng, st, radius, { provisional: false, buildings: true, poi: true, terrain: st.terrain, reqId });
                 } catch (e) {
                     const tn = document.getElementById('terrainNote');
                     const msg = ' ⚠️ Precyzyjna analiza nie powiodła się (Overpass niedostępny) — pokazuję szybką ocenę bez osłony budynków.';
@@ -1596,9 +1609,9 @@
     }
 
     // Interpretacja wyniku w dB (panel edukacyjny)
-    function eduInterpretation(level) {
+    function eduInterpretation(level, dom) {
         if (level == null) return 'Kliknij punkt na mapie, aby zobaczyć interpretację wyniku.';
-        const lvlTxt = `<b>${level} dB</b> – ${dbAnalogy(level)}`;
+        const lvlTxt = `<b>${level} dB</b> – ${dbAnalogy(level, dom)}`;
         let harmful, health, time;
         if (level < 40) { harmful = 'nie szkodzi'; health = 'To bardzo cicho, poniżej dopuszczalnej normy hałasu w domu (40 dB w dzień, 30 dB w nocy). Idealne dla wypoczynku i snu.'; time = 'przebywanie bezpieczne całą dobę.'; }
         else if (level < 55) { harmful = 'nie szkodzi'; health = 'Poziom cichy, mieści się w normie mieszkaniowej.'; time = 'długotrwale bezpieczny dla słuchu i snu.'; }
@@ -1628,11 +1641,7 @@
 
         let color, label;
         if (level == null) { color = '#95a5a6'; label = 'Brak danych'; }
-        else if (level < 40) { color = '#1e8449'; label = 'Absolutna cisza 🌲'; }
-        else if (level < 55) { color = '#27ae60'; label = 'Bardzo cicho 🍃'; }
-        else if (level < 70) { color = '#f1c40f'; label = 'Umiarkowany szum 🌆'; }
-        else if (level < 85) { color = '#e67e22'; label = 'Głośno – szkodliwe 🚗'; }
-        else { color = '#c0392b'; label = 'Bardzo głośno! 🚆'; }
+        else { color = levelColor(level); label = dbAnalogy(level, d.sources && d.sources[0]); }
         c.style.background = color;
         document.getElementById('riskLevel').innerText = label;
 
@@ -1650,7 +1659,7 @@
         }
         const ns = document.getElementById('noiseScale');
         if (ns) ns.innerHTML = (level != null)
-            ? `Twój wynik to <b>${level} dB</b> – ${dbAnalogy(level)}.`
+            ? `Twój wynik to <b>${level} dB</b> – ${dbAnalogy(level, d.sources && d.sources[0])}.`
             : '';
         const aEl = document.getElementById('assessment');
         aEl.innerHTML = d.assessment ? d.assessment.replace(/</g, '&lt;') : '';
@@ -1660,7 +1669,7 @@
                 ' dB</b></span>';
         }
         document.getElementById('terrainNote').innerText = d.terrain_note || '';
-        document.getElementById('eduResult').innerHTML = eduInterpretation(level);
+        document.getElementById('eduResult').innerHTML = eduInterpretation(level, d.sources && d.sources[0]);
 
         const tb = document.querySelector('#srcTable tbody');
         tb.innerHTML = '';
