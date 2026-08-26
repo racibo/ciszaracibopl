@@ -1,78 +1,103 @@
-// Netlify Function: proxy do Overpass API.
-// Rozwiązuje problemy z CORS (przeglądarka woła /api/overpass samoopisowo)
-// i pozwala przymierzyć kilka backendów serwerowo (bez CORS).
-exports.handler = async (event) => {
-  let q;
-  if (event.body) {
-    let raw = event.body;
-    if (event.isBase64Encoded) {
-      raw = Buffer.from(raw, "base64").toString("utf8");
-    }
-    if (typeof raw === "object") {
-      q = raw.q; // ciało już sparsowane
-    } else {
-      try {
-        q = JSON.parse(raw).q;
-      } catch (e) {
-        q = raw; // ciało to surowe zapytanie Overpass
-      }
-    }
-  }
-  if (!q) {
-    return { statusCode: 400, body: JSON.stringify({ error: "brak parametru q" }) };
-  }
+import { createHash } from 'crypto';
+import { getStore } from '@netlify/blobs';
 
-  // encodeURIComponent nie koduje (),*!~' – Overpass tego nie toleruje w form-urlencoded.
-  const enc = (s) =>
-    encodeURIComponent(s).replace(/[()*!~']/g, (c) =>
-      "%" + c.charCodeAt(0).toString(16).toUpperCase());
+// Serwerowa warstwa cache dla Overpassa (Netlify Blobs, TTL 30 dni).
+// Przeglądarka w index.html woła POST /api/overpass z ciałem {"q": "<zapytanie Overpass>"}.
+// Pierwszy użytkownik w danej okolicy "płaci" za zapytanie do Overpassa; kolejni
+// dostają wynik natychmiast z Blobs -> mniej żywych zapytań = mniej trafień w rate-limit.
+// Gdy Blobs/Overpass zawiedzie, zwracamy 502 z pustymi elementami (frontend falluje
+// do bezpośrednich mirror-ów CORS).
 
-  const backends = [
-    "https://overpass-api.de/api/interpreter",
-    "https://overpass.osm.ch/api/interpreter",
-    "https://overpass.openstreetmap.ru/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.private.coffee/api/interpreter"
-  ];
+const ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.osm.ch/api/interpreter',
+  'https://private.coffee/api/overpass/',
+];
 
-  // Wyścig: pierwszy działający backend wygrywa (mieści się w limicie 10s Netlify).
-  const controllers = [];
-  const requests = backends.map((url) => {
-    const c = new AbortController();
-    controllers.push(c);
-    return (async () => {
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": "cisza-proxy/1.0",
-          "Accept": "*/*"
-        },
-        body: "data=" + enc(q),
-        signal: AbortSignal.timeout(8000)
+const TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+// getStore bez jawnego siteID/token działa na Netlify (kontekst wstrzykiwany automatycznie).
+const store = getStore('overpass-cache');
+
+function keyFor(q) {
+  return createHash('sha256').update(q).digest('hex');
+}
+
+async function fetchOverpass(q) {
+  const body = 'data=' + encodeURIComponent(q);
+  for (const ep of ENDPOINTS) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 25000);
+      const r = await fetch(ep, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+        signal: ctrl.signal,
       });
-      if (!resp.ok) throw new Error("HTTP " + resp.status + " (" + url + ")");
-      return await resp.text();
-    })().catch((e) => { c.abort(); throw e; });
-  });
-
-  try {
-    const text = await Promise.any(requests);
-    controllers.forEach((c) => c.abort());
-    return {
-      statusCode: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*"
-      },
-      body: text
-    };
-  } catch (e) {
-    const all = Array.isArray(e.errors) ? e.errors.map(String).join("; ") : (e.message || String(e));
-    return {
-      statusCode: 502,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ error: all || "brak odpowiedzi Overpass" })
-    };
+      clearTimeout(timer);
+      if (!r.ok) continue;
+      const j = await r.json();
+      if (!j || !Array.isArray(j.elements)) continue;
+      return j;
+    } catch (e) {
+      // spróbuj kolejnego endpointu
+    }
   }
+  return null;
+}
+
+export default async (request) => {
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  let q;
+  try {
+    const ct = request.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const data = await request.json();
+      q = data && data.q;
+    } else {
+      const text = await request.text();
+      const m = text.match(/data=(.*)$/s);
+      q = m ? decodeURIComponent(m[1]) : null;
+    }
+  } catch (e) {
+    return new Response('Bad Request', { status: 400 });
+  }
+  if (!q) return new Response('Missing query', { status: 400 });
+
+  const key = keyFor(q);
+
+  // 1) HIT z Blobs (jeśli świeże ≤ 30 dni)
+  try {
+    const cached = await store.get(key, { type: 'json' });
+    if (cached && cached._storedAt && (Date.now() - cached._storedAt) < TTL_MS) {
+      return new Response(JSON.stringify(cached.data), {
+        headers: { 'Content-Type': 'application/json', 'X-Cache': 'HIT' },
+      });
+    }
+  } catch (e) {
+    // cache miss / błąd odczytu -> idziemy do Overpassa
+  }
+
+  // 2) MISS -> zapytanie do Overpassa
+  const data = await fetchOverpass(q);
+  if (!data) {
+    return new Response(JSON.stringify({ remark: 'Overpass niedostępny', elements: [] }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // 3) zapisz do Blobs (ignorujemy błędy zapisu)
+  try {
+    await store.set(key, JSON.stringify({ _storedAt: Date.now(), data }));
+  } catch (e) { /* non-fatal */ }
+
+  return new Response(JSON.stringify(data), {
+    headers: { 'Content-Type': 'application/json', 'X-Cache': 'MISS' },
+  });
 };

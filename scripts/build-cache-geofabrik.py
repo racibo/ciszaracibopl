@@ -1,31 +1,29 @@
 #!/usr/bin/env python3
-# Generator statycznych kafelków hałasu z ekstraktu Geofabrik (BEZ Overpassa).
-# Czyta poland-latest.osm.pbf i dzieli wybrane obszary (REGIONS) na kafelki
-# siatki (komórka STATIC_CELL). Przeglądarka czyta kafelek zanim uderzy do
-# live Overpassa -> wybrane miejsca działają w 100% offline, nawet gdy
-# Overpass jest niedostępny.
+# Generator statycznych kafelków hałasu z ekstraktów Geofabrik (BEZ Overpassa).
+# Czyta extract(y) wojewódzkie Geofabrik i dzieli wybrane obszary (REGIONS)
+# na kafelki siatki (komórka STATIC_CELL). Przeglądarka czyta kafelek zanim
+# uderzy do live Overpassa -> wybrane miejsca działają w 100% offline.
 #
 # Stałe STATIC_ORIGIN_* i STATIC_CELL MUSZĄ być zgodne z index.html!
+# Zmienna środowiskowa TILES_OUT pozwala zapisać kafelki do katalogu
+# tymczasowego (etapowanie per-województwo w matrix CI); domyślnie ./tiles.
 import osmium, json, os, sys, tempfile, datetime
 from collections import defaultdict
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TILES_DIR = os.path.join(ROOT, 'tiles')
+TILES_DIR = os.environ.get('TILES_OUT') or os.path.join(ROOT, 'tiles')
 
 ORIGIN_LAT = 54.30
 ORIGIN_LON = 18.40
 CELL = 0.02            # ~2.2 km
 RADIUS = 2000
 
-# Obszary, dla których budujemy kafelki. Dowolna liczba – wystarczy dopisać
-# (nazwa, latMin, latMax, lonMin, lonMax). Dane pochodzą z ekstraktu Geofabrik
-# "poland-latest", więc można pokryć dowolne miejsce w Polsce.
+# Obszar, dla którego budujemy kafelki. Cała Polska – dzięki temu każdy punkt
+# w kraju działa offline (BEZ Overpassa). Wystarczy, by extracty Geofabrik
+# pokrywały cały kraj (wszystkie 16 województw w GEOFABRIK_PBFS).
+# (nazwa, latMin, latMax, lonMin, lonMax)
 REGIONS = [
-    ('Trojmiasto',           54.30, 54.64, 18.36, 18.86),
-    ('Biskupiec',           53.78, 53.90, 20.86, 21.04),
-    ('Ciechocinek',         52.83, 52.94, 18.85, 19.02),
-    ('Aleksandrow Kujawski', 52.83, 52.94, 18.62, 18.78),
-    ('Krutyń',              53.58, 53.69, 21.25, 21.42),
+    ('Polska', 49.0, 54.9, 14.0, 24.2),
 ]
 
 HW = {'motorway','trunk','primary','secondary','tertiary','residential',

@@ -12,21 +12,37 @@ Model: dyskretyzacja dróg/torów na odcinki 20 m, 48 promieni (co 7,5°), rozsz
 `man_made=embankment`), lokalny `terrain_slope_m` ze STACJA.txt. Wynik: Lden w dB, z rozbiciem
 na drogi/kolej/teren, plus tabela i mapa wkładu każdego źródła.
 
-## Statyczny cache (offline poza Trójmiastem) — architektura
-- `scripts/build-cache-geofabrik.py` czyta extract(y) Geofabriek (`GEOFABRIK_PBFS`, `:`-lista)
-  i dzieli wybrane obszary (`REGIONS`: nazwa + bbox) na kafelki siatki `CELL=0.02°` (~2,2 km)
-  wokół origin `(54.30, 18.40)` — **te same stałe co `STATIC_ORIGIN_*`/`STATIC_CELL` w index.html!**
-- **UWAGA: link `poland-latest.osm.pbf` jest zepsuty** (302→strona główna). Używamy extractów
-  wojewódzkich: `pomorskie`, `warminsko-mazurskie`, `kujawsko-pomorskie` (działają, 302→dated).
-- `.github/workflows/cache.yml`: pobiera 3 extracty wojewódzkie i woła skrypt; `git-auto-commit`
-  zapisuje `tiles/*` + `tiles/manifest.json`. Trigger: cron miesięczny + `workflow_dispatch`.
+## Statyczny cache (offline CAŁA POLSKA) — architektura
+- `scripts/build-cache-geofabrik.py` czyta extract(y) Geofabrik (`GEOFABRIK_PBFS`, `:`-lista)
+  i dzieli obszar `REGIONS` na kafelki siatki `CELL=0.02°` (~2,2 km) wokół origin
+  `(54.30, 18.40)` — **te same stałe co `STATIC_ORIGIN_*`/`STATIC_CELL` w index.html!**
+  `REGIONS = [('Polska', 49.0, 54.9, 14.0, 24.2)]` → każdy punkt w kraju działa BEZ Overpassa.
+  Skrypt pomija puste komórki (`if not (ways or buildings or poi): continue`), więc repo
+  nie zapełnia się pustymi plikami. Wyjście kierowane do `TILES_OUT` (etapowanie matrix).
+- **UWAGA: link `poland-latest.osm.pbf` jest zepsuty** (302→strona główna). Używamy 16
+  extractów wojewódzkich Geofabrik (działają, 302→dated).
+- `.github/workflows/cache.yml`: **matrix 16 województw** (każde pobiera swój extract,
+  generuje `tiles-stage/<region>` przez `TILES_OUT`), potem job `merge`
+  (`scripts/merge-tiles.py`) łączy etapy w `tiles/*.json` z deduplikacją wg `id` (drogi na
+  granicach). `git-auto-commit` zapisuje `tiles/*` + `tiles/manifest.json`.
+  Trigger: **cron co 2 miesiące** + `workflow_dispatch`. (Matrix zamiast jednego przebiegu
+  chroni przed OOM przy przetwarzaniu całej Polski naraz.)
 - `index.html`: `fetchWays/fetchBuildings/fetchPOI` najpierw wołają `loadStaticTileBlock`;
   gdy kafelek istnieje (punkt w `man.regions`), zwracają dane statyczne i **nie uderzają do
   Overpassa**. `loadStaticTile` sprawdza pokrycie względem `man.regions` (lista bbox-ów).
-- **Dodanie nowego miejsca:** dopisać `(nazwa, latMin,latMax,lonMin,lonMax)` do `REGIONS` w
-  `build-cache-geofabrik.py`, odpalić `gh workflow run cache.yml` → po ~10–20 min kafelki
-  są w repo i miejsce działa offline. Przykład dodanych: Biskupiec, Ciechocinek,
-  Aleksandrów Kujawski, Krutyń.
+- **Rozszerzenie poza PL:** dopisać extract do matrix (`cache.yml`) + bbox do `REGIONS`
+  w `build-cache-geofabrik.py`, odpalić `gh workflow run cache.yml`.
+
+## Cache po stronie serwera (Netlify Blobs) — `/api/overpass`
+- `netlify/functions/overpass.js` (ESM) to proxy: frontend woła `POST /api/overpass`
+  z `{"q": "<zapytanie Overpass>"}`; funkcja sprawdza Netlify Blobs (`overpass-cache`),
+  zwraca HIT (≤30 dni) lub woła Overpassa (4 endpointy, fallback) i zapisuje MISS.
+  `netlify.toml` mapuje `/api/overpass` → `/.netlify/functions/overpass`.
+- Frontend (`opQuery`) **już woła `/api/overpass`** równolegle z bezpośrednimi mirrorami
+  CORS i falluje do nich, gdy proxy 404/502 (np. na GitHub Pages, gdzie funkcja nie działa).
+  Efekt: na Netlify pierwszy użytkownik w okolicy "płaci" za Overpass, reszta dostaje cache
+  → mniej trafień w rate-limit, bez zmian we froncie.
+- `DIRECT_OVERPASS` ma teraz 4 mirrory (dodano `overpass.kumi.systems`, load-balancer z CORS).
 
 ## Kluczowe funkcje (index.html)
 - `fetchWays(lat,lng,radius,group)` — dla Trójmiasto czyta `tiles/...json` (Geofabrik, monthly

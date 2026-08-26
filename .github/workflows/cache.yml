@@ -2,8 +2,9 @@ name: Build static noise cache
 
 on:
   schedule:
-    # Raz w miesiącu (1. dzień, 03:17 UTC) – darmowy cron GitHub Actions.
-    - cron: '17 3 1 * *'
+    # Co 2 miesiące (1. dnia parzystego miesiąca, 03:17 UTC) – dane drogowe
+    # zmieniają się powoli, a extracty wojewódzkie (~2–3 GB) długo się pobierają.
+    - cron: '17 3 1 */2 *'
   workflow_dispatch: {}
 
 permissions:
@@ -12,6 +13,27 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        region:
+          - dolnoslaskie
+          - kujawsko-pomorskie
+          - lubelskie
+          - lubuskie
+          - lodzkie
+          - malopolskie
+          - mazowieckie
+          - opolskie
+          - podkarpackie
+          - podlaskie
+          - pomorskie
+          - slaskie
+          - swietokrzyskie
+          - warminsko-mazurskie
+          - wielkopolskie
+          - zachodniopomorskie
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,21 +46,54 @@ jobs:
       - name: Install pyosmium
         run: python -m pip install --quiet osmium
 
-      - name: Download Geofabrik voivodeship extracts (BEZ Overpassa)
+      - name: Download Geofabrik extract (BEZ Overpassa)
         run: |
           BASE=https://download.geofabrik.de/europe/poland
-          curl -sSL -o "$RUNNER_TEMP/pomorskie.osm.pbf"        "$BASE/pomorskie-latest.osm.pbf"
-          curl -sSL -o "$RUNNER_TEMP/warminsko-mazurskie.osm.pbf" "$BASE/warminsko-mazurskie-latest.osm.pbf"
-          curl -sSL -o "$RUNNER_TEMP/kujawsko-pomorskie.osm.pbf" "$BASE/kujawsko-pomorskie-latest.osm.pbf"
-          echo "GEOFABRIK_PBFS=$RUNNER_TEMP/pomorskie.osm.pbf:$RUNNER_TEMP/warminsko-mazurskie.osm.pbf:$RUNNER_TEMP/kujawsko-pomorskie.osm.pbf" >> "$GITHUB_ENV"
+          curl -sSL -o "$RUNNER_TEMP/${{ matrix.region }}.osm.pbf" \
+            "$BASE/${{ matrix.region }}-latest.osm.pbf"
+          echo "GEOFABRIK_PBFS=$RUNNER_TEMP/${{ matrix.region }}.osm.pbf" >> "$GITHUB_ENV"
 
-      - name: Generate static tiles
-        run: python scripts/build-cache-geofabrik.py
+      - name: Generate tiles (staged per-region)
+        run: TILES_OUT=tiles-stage/${{ matrix.region }} python scripts/build-cache-geofabrik.py
+
+      - name: Upload staged tiles
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tiles-${{ matrix.region }}
+          path: tiles-stage/${{ matrix.region }}
+          if-no-files-found: ignore
+          retention-days: 7
+
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download staged tiles
+        uses: actions/download-artifact@v4
+        with:
+          path: staged
+          merge-multiple: false
+
+      - name: Remove stale tiles
+        run: rm -f tiles/*.json tiles/manifest.json
+
+      - name: Merge per-region tiles
+        run: python scripts/merge-tiles.py staged tiles
 
       - name: Commit tiles
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: 'cache: odśwież statyczne kafelki hałasu (Geofabrik)'
+          commit_message: 'cache: odśwież statyczne kafelki hałasu (Geofabrik, cała Polska)'
           file_pattern: 'tiles/*'
           commit_user_name: 'cache-bot'
           commit_user_email: 'cache-bot@users.noreply.github.com'

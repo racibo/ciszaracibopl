@@ -1,8 +1,12 @@
 [build]
-  functions = "netlify/functions"
   publish = "."
 
+[functions]
+  directory = "netlify/functions"
+
+# Przeglądarka woła /api/overpass -> serwerowa funkcja z cache (Netlify Blobs).
 [[redirects]]
   from = "/api/overpass"
   to = "/.netlify/functions/overpass"
   status = 200
+  force = true
